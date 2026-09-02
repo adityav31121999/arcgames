@@ -64,56 +64,67 @@ class ModelFactory:
             PretrainedConfig,
         )
 
-        # Handle unrecognized model types like 'gemma4' or custom remote architectures
+        # Base Gemma configuration & model classes
+        gemma_base_cfg = getattr(transformers, "Gemma2Config", GemmaConfig)
+        gemma_base_model = getattr(
+            transformers, "Gemma2ForCausalLM", getattr(transformers, "GemmaForCausalLM", None)
+        )
+
+        # 1. Register 'gemma4' architecture with AutoConfig and AutoModel
+        class Gemma4Config(gemma_base_cfg):  # type: ignore
+            model_type = "gemma4"
+
+        try:
+            AutoConfig.register("gemma4", Gemma4Config)
+            if gemma_base_model is not None:
+                AutoModelForCausalLM.register(Gemma4Config, gemma_base_model)
+                if hasattr(transformers, "AutoModelForImageTextToText"):
+                    transformers.AutoModelForImageTextToText.register(Gemma4Config, gemma_base_model)
+                if hasattr(transformers, "AutoModel"):
+                    transformers.AutoModel.register(Gemma4Config, gemma_base_model)
+            print("🔧 [MODEL FACTORY] Successfully registered 'gemma4' architecture in AutoConfig.")
+        except Exception as e:
+            print(f"ℹ️ AutoConfig registration note: {e}")
+
+        # 2. Check for custom Python modules or other model_types in model directory
         model_dir = Path(model_id) if Path(model_id).is_dir() else None
-        model_type = None
         if model_dir and (model_dir / "config.json").exists():
             try:
                 with open(model_dir / "config.json", "r", encoding="utf-8") as f:
                     cfg_dict = json.load(f)
-                    model_type = cfg_dict.get("model_type")
+                    detected_type = cfg_dict.get("model_type")
+                    if detected_type and detected_type != "gemma4":
+                        try:
+                            custom_cfg = type(f"{detected_type.capitalize()}Config", (gemma_base_cfg,), {"model_type": detected_type})
+                            AutoConfig.register(detected_type, custom_cfg)
+                            if gemma_base_model:
+                                AutoModelForCausalLM.register(custom_cfg, gemma_base_model)
+                            print(f"🔧 [MODEL FACTORY] Registered dynamic config for '{detected_type}'.")
+                        except Exception:
+                            pass
             except Exception:
                 pass
 
-        if model_type and model_type not in transformers.models.auto.configuration_auto.CONFIG_MAPPING:
-            print(f"🔧 [MODEL FACTORY] Registering dynamic config handler for model_type='{model_type}'...")
-            loaded_custom = False
-
-            # 1. Check for custom Python modules in the model folder
-            if model_dir:
-                for py_file in sorted(model_dir.glob("*.py")):
-                    try:
-                        spec = importlib.util.spec_from_file_location(py_file.stem, str(py_file))
-                        if spec and spec.loader:
-                            mod = importlib.util.module_from_spec(spec)
-                            spec.loader.exec_module(mod)
-                            for attr_name in dir(mod):
-                                attr = getattr(mod, attr_name)
-                                if (
-                                    isinstance(attr, type)
-                                    and issubclass(attr, PretrainedConfig)
-                                    and attr is not PretrainedConfig
-                                ):
-                                    transformers.models.auto.configuration_auto.CONFIG_MAPPING.register(model_type, attr)
-                                    loaded_custom = True
-                                    print(f"✅ Auto-registered custom config '{attr_name}' for '{model_type}'")
-                    except Exception as exc:
-                        print(f"⚠️ Custom module load note ({py_file.name}): {exc}")
-
-            # 2. Fallback dynamic registration
-            if not loaded_custom:
-                gemma_base_cfg = getattr(transformers, "Gemma2Config", GemmaConfig)
-                gemma_base_model = getattr(transformers, "Gemma2ForCausalLM", getattr(transformers, "GemmaForCausalLM", None))
-
-                class DynamicGemma4Config(gemma_base_cfg):  # type: ignore
-                    model_type = model_type
-
-                transformers.models.auto.configuration_auto.CONFIG_MAPPING.register(model_type, DynamicGemma4Config)
-                if gemma_base_model is not None:
-                    transformers.models.auto.modeling_auto.MODEL_FOR_CAUSAL_LM_MAPPING.register(
-                        DynamicGemma4Config, gemma_base_model
-                    )
-                print(f"✅ Dynamic fallback registration complete for '{model_type}'.")
+            # Search and load any custom modeling code in the checkpoint directory
+            for py_file in sorted(model_dir.glob("*.py")):
+                try:
+                    spec = importlib.util.spec_from_file_location(py_file.stem, str(py_file))
+                    if spec and spec.loader:
+                        mod = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(mod)
+                        for attr_name in dir(mod):
+                            attr = getattr(mod, attr_name)
+                            if (
+                                isinstance(attr, type)
+                                and issubclass(attr, PretrainedConfig)
+                                and attr is not PretrainedConfig
+                            ):
+                                model_type_name = getattr(attr, "model_type", None)
+                                if model_type_name:
+                                    AutoConfig.register(model_type_name, attr)
+                                    print(f"✅ Auto-registered custom config '{attr_name}' for '{model_type_name}'")
+                except Exception as exc:
+                    print(f"⚠️ Custom module load note ({py_file.name}): {exc}")
 
         dtype_map = {
             "bfloat16": torch.bfloat16,
@@ -122,7 +133,7 @@ class ModelFactory:
         }
         torch_dtype = dtype_map.get(config.torch_dtype.lower(), torch.bfloat16)
 
-        # Attempt loading processor / tokenizer
+        # 3. Attempt loading processor / tokenizer
         processor = None
         try:
             processor = AutoProcessor.from_pretrained(
@@ -142,7 +153,7 @@ class ModelFactory:
                 print(f"⚠️ AutoTokenizer fallback loading: {e2}")
                 processor = AutoTokenizer.from_pretrained("google/gemma-2-9b-it")
 
-        # Attempt model load with AutoModelForImageTextToText / AutoModelForCausalLM / AutoModel
+        # 4. Multi-tier model loading with fallbacks
         model = None
         load_kwargs = {
             "torch_dtype": torch_dtype,
@@ -153,6 +164,7 @@ class ModelFactory:
         if config.attn_implementation and config.attn_implementation != "default":
             load_kwargs["attn_implementation"] = config.attn_implementation
 
+        # Tier 1: AutoModelForImageTextToText
         try:
             from transformers import AutoModelForImageTextToText
 
@@ -160,13 +172,32 @@ class ModelFactory:
             print("✅ Loaded as AutoModelForImageTextToText (multimodal vision-language model).")
         except Exception as e:
             print(f"ℹ️ AutoModelForImageTextToText note ({e}) -> trying AutoModelForCausalLM...")
+
+        # Tier 2: AutoModelForCausalLM
+        if model is None:
             try:
                 model = AutoModelForCausalLM.from_pretrained(model_id, **load_kwargs)
                 print("✅ Loaded as AutoModelForCausalLM.")
-            except Exception as e2:
-                print(f"ℹ️ AutoModelForCausalLM note ({e2}) -> trying AutoModel...")
+            except Exception as e:
+                print(f"ℹ️ AutoModelForCausalLM note ({e}) -> trying AutoModel...")
+
+        # Tier 3: AutoModel
+        if model is None:
+            try:
                 model = AutoModel.from_pretrained(model_id, **load_kwargs)
                 print("✅ Loaded as AutoModel.")
+            except Exception as e:
+                print(f"ℹ️ AutoModel note ({e}) -> trying direct Gemma2ForCausalLM loader...")
+
+        # Tier 4: Direct Gemma Architecture Fallback
+        if model is None and gemma_base_model is not None:
+            try:
+                cfg = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
+                model = gemma_base_model.from_pretrained(model_id, config=cfg, **load_kwargs)
+                print("✅ Loaded directly via Gemma2ForCausalLM.")
+            except Exception as e:
+                raise RuntimeError(f"All model loading tiers failed for '{model_id}': {e}")
+
 
 
         model.eval()
