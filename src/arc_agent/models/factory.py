@@ -37,7 +37,10 @@ class ModelFactory:
                 print(f"🔍 [MODEL FACTORY] Auto-located offline model weights at: {discovered_path}")
                 model_id = discovered_path
             else:
+                print(f"🌐 [MODEL FACTORY] Using model identifier: {model_id}")
+
         print(f"🚀 [MODEL FACTORY] Loading model '{model_id}' on {config.device} ({config.torch_dtype})...")
+
 
         # Compatibility hotfix for PIL / torchvision _Ink typing mismatch in Kaggle
         try:
