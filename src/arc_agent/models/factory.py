@@ -22,6 +22,7 @@ class ModelFactory:
             print("🤖 [MODEL FACTORY] Instantiating MockChatModel for testing/dry-run.")
             return MockChatModel()
 
+        # pyrefly: ignore [missing-import]
         import torch
 
 
@@ -70,19 +71,10 @@ class ModelFactory:
             transformers, "Gemma2ForCausalLM", getattr(transformers, "GemmaForCausalLM", None)
         )
 
-        # 1. Register 'gemma4' architecture with AutoConfig and AutoModel
-        class Gemma4Config(gemma_base_cfg):  # type: ignore
-            model_type = "gemma4"
-
+        # 1. Register 'gemma4' architecture directly with AutoConfig
         try:
-            AutoConfig.register("gemma4", Gemma4Config)
-            if gemma_base_model is not None:
-                AutoModelForCausalLM.register(Gemma4Config, gemma_base_model)
-                if hasattr(transformers, "AutoModelForImageTextToText"):
-                    transformers.AutoModelForImageTextToText.register(Gemma4Config, gemma_base_model)
-                if hasattr(transformers, "AutoModel"):
-                    transformers.AutoModel.register(Gemma4Config, gemma_base_model)
-            print("🔧 [MODEL FACTORY] Successfully registered 'gemma4' architecture in AutoConfig.")
+            AutoConfig.register("gemma4", gemma_base_cfg)
+            print("🔧 [MODEL FACTORY] Successfully mapped 'gemma4' model_type to Gemma configuration.")
         except Exception as e:
             print(f"ℹ️ AutoConfig registration note: {e}")
 
@@ -95,10 +87,7 @@ class ModelFactory:
                     detected_type = cfg_dict.get("model_type")
                     if detected_type and detected_type != "gemma4":
                         try:
-                            custom_cfg = type(f"{detected_type.capitalize()}Config", (gemma_base_cfg,), {"model_type": detected_type})
-                            AutoConfig.register(detected_type, custom_cfg)
-                            if gemma_base_model:
-                                AutoModelForCausalLM.register(custom_cfg, gemma_base_model)
+                            AutoConfig.register(detected_type, gemma_base_cfg)
                             print(f"🔧 [MODEL FACTORY] Registered dynamic config for '{detected_type}'.")
                         except Exception:
                             pass
@@ -126,6 +115,36 @@ class ModelFactory:
                 except Exception as exc:
                     print(f"⚠️ Custom module load note ({py_file.name}): {exc}")
 
+        # 3. Load and sanitize model configuration (resolving 'dict' object has no attribute 'to_dict')
+        cfg = None
+        try:
+            cfg = AutoConfig.from_pretrained(model_id, trust_remote_code=config.trust_remote_code)
+        except Exception as e:
+            print(f"ℹ️ AutoConfig.from_pretrained note ({e}) -> trying gemma_base_cfg...")
+            try:
+                cfg = gemma_base_cfg.from_pretrained(model_id, trust_remote_code=config.trust_remote_code)
+            except Exception:
+                pass
+
+        if cfg is not None:
+            # Fix text_config if raw dict is returned
+            if hasattr(cfg, "text_config") and isinstance(cfg.text_config, dict):
+                try:
+                    cfg.text_config = gemma_base_cfg(**cfg.text_config)
+                except Exception:
+                    pass
+            # Ensure get_text_config returns a PretrainedConfig with .to_dict()
+            if hasattr(cfg, "get_text_config"):
+                orig_get_text = cfg.get_text_config
+
+                def safe_get_text_config(*args, **kwargs):
+                    res = orig_get_text(*args, **kwargs)
+                    if isinstance(res, dict):
+                        return gemma_base_cfg(**res)
+                    return res
+
+                cfg.get_text_config = safe_get_text_config
+
         dtype_map = {
             "bfloat16": torch.bfloat16,
             "float16": torch.float16,
@@ -133,7 +152,7 @@ class ModelFactory:
         }
         torch_dtype = dtype_map.get(config.torch_dtype.lower(), torch.bfloat16)
 
-        # 3. Attempt loading processor / tokenizer
+        # 4. Attempt loading processor / tokenizer
         processor = None
         try:
             processor = AutoProcessor.from_pretrained(
@@ -153,13 +172,15 @@ class ModelFactory:
                 print(f"⚠️ AutoTokenizer fallback loading: {e2}")
                 processor = AutoTokenizer.from_pretrained("google/gemma-2-9b-it")
 
-        # 4. Multi-tier model loading with fallbacks
+        # 5. Multi-tier model loading with fallbacks
         model = None
         load_kwargs = {
             "torch_dtype": torch_dtype,
             "trust_remote_code": config.trust_remote_code,
             "device_map": config.device if torch.cuda.is_available() else "cpu",
         }
+        if cfg is not None:
+            load_kwargs["config"] = cfg
 
         if config.attn_implementation and config.attn_implementation != "default":
             load_kwargs["attn_implementation"] = config.attn_implementation
@@ -192,11 +213,11 @@ class ModelFactory:
         # Tier 4: Direct Gemma Architecture Fallback
         if model is None and gemma_base_model is not None:
             try:
-                cfg = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
-                model = gemma_base_model.from_pretrained(model_id, config=cfg, **load_kwargs)
+                model = gemma_base_model.from_pretrained(model_id, **load_kwargs)
                 print("✅ Loaded directly via Gemma2ForCausalLM.")
             except Exception as e:
                 raise RuntimeError(f"All model loading tiers failed for '{model_id}': {e}")
+
 
 
 
