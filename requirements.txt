@@ -1,0 +1,23 @@
+# Core Machine Learning & Model Stack
+torch>=2.2.0
+transformers>=4.48.0
+accelerate>=0.28.0
+
+# LangChain Ecosystem
+langchain>=0.2.0
+langchain-core>=0.2.0
+langchain-community>=0.2.0
+
+# Data, Config, and Numerical Processing
+pydantic>=2.5.0
+pyyaml>=6.0
+numpy>=1.24.0
+matplotlib>=3.7.0
+pillow>=10.0.0
+python-dotenv>=1.0.0
+diskcache>=5.6.0
+pandas>=2.0.0
+pyarrow>=14.0.0
+
+# Testing & Dev
+pytest>=7.4.0

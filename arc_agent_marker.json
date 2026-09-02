@@ -1,0 +1,5 @@
+{
+  "name": "arc-agent-source-bundle",
+  "version": "0.1.0",
+  "description": "Marker file for Kaggle offline dataset auto-discovery"
+}

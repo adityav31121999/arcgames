@@ -1,0 +1,56 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+*.zip
+
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Agent Scratchpad, Memory & Cache directories
+agent_memory/
+scratchpad/
+/tmp/agent_vision/
+/tmp/arc_agent/
+*.log
+
+# Kaggle / Submission outputs
+submission.parquet
+*.parquet
+
+# IDE / Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Pytest / Coverage
+.pytest_cache/
+.coverage
+htmlcov/
