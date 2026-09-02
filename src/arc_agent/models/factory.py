@@ -37,11 +37,19 @@ class ModelFactory:
                 print(f"🔍 [MODEL FACTORY] Auto-located offline model weights at: {discovered_path}")
                 model_id = discovered_path
             else:
-                print(f"🌐 [MODEL FACTORY] Using model identifier: {model_id}")
-
         print(f"🚀 [MODEL FACTORY] Loading model '{model_id}' on {config.device} ({config.torch_dtype})...")
 
+        # Compatibility hotfix for PIL / torchvision _Ink typing mismatch in Kaggle
+        try:
+            import PIL._typing
+            if not hasattr(PIL._typing, "_Ink"):
+                from typing import Union, Tuple, Sequence
+                PIL._typing._Ink = Union[Tuple[int, ...], str, int, float, Sequence[int]]
+        except Exception:
+            pass
+
         from transformers import AutoModelForCausalLM, AutoProcessor, AutoTokenizer
+
 
         dtype_map = {
             "bfloat16": torch.bfloat16,
