@@ -116,6 +116,33 @@ class ModelFactory:
                     print(f"⚠️ Custom module load note ({py_file.name}): {exc}")
 
         # 3. Load and sanitize model configuration (resolving 'dict' object has no attribute 'to_dict')
+        # Monkey-patch GenerationConfig.from_model_config globally to handle cases where model_config.get_text_config() returns a dict
+        try:
+            from transformers.generation.configuration_utils import GenerationConfig
+            orig_from_model_config = GenerationConfig.from_model_config
+
+            @classmethod
+            def patched_from_model_config(cls, model_config):
+                try:
+                    if hasattr(model_config, "get_text_config"):
+                        t_cfg = model_config.get_text_config(decoder=True)
+                        if isinstance(t_cfg, dict):
+                            # wrap raw dict into a PretrainedConfig
+                            model_config.text_config = gemma_base_cfg(**t_cfg)
+                except Exception:
+                    pass
+                try:
+                    return orig_from_model_config(model_config)
+                except AttributeError as ae:
+                    if "'dict' object has no attribute 'to_dict'" in str(ae):
+                        # Fallback: construct GenerationConfig from empty or base dictionary
+                        return cls()
+                    raise ae
+
+            GenerationConfig.from_model_config = patched_from_model_config
+        except Exception as patch_exc:
+            print(f"ℹ️ GenerationConfig patch note: {patch_exc}")
+
         cfg = None
         try:
             cfg = AutoConfig.from_pretrained(model_id, trust_remote_code=config.trust_remote_code)
