@@ -9,7 +9,10 @@ _COORD_RE = re.compile(r"\bX\s*[:=]\s*(-?\d+)\D+Y\s*[:=]\s*(-?\d+)", re.IGNORECA
 
 
 def is_complex_action(action: Any) -> bool:
-    """Checks if action requires coordinates (e.g. ACTION6)."""
+    """Checks if action requires coordinates (e.g. Action 6)."""
+    name = getattr(action, "name", str(action)).upper()
+    if "ACTION_6" in name or "ACTION6" in name or "CLICK" in name:
+        return True
     val = getattr(action, "is_complex", False)
     return val() if callable(val) else bool(val)
 

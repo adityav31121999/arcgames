@@ -161,10 +161,24 @@ class ARCRunner:
                 print(f"⚠️ [TIMEOUT MONITOR] Exceeded budget during Step {step_count}. Returning.")
                 return current_state, current_state.game_state, step_count
 
+            # Dynamically refresh permitted actions from current frame metadata or env.action_space
+            raw_obs = current_state.raw_obs
+            current_valid_actions = (
+                getattr(raw_obs, "available_actions", None)
+                or getattr(raw_obs, "action_space", None)
+                or (
+                    raw_obs.metadata.get("available_actions")
+                    if hasattr(raw_obs, "metadata") and isinstance(raw_obs.metadata, dict)
+                    else None
+                )
+                or getattr(env, "action_space", None)
+                or valid_actions
+            )
+
             render_live(current_state, status=f"🔄 Step {step_count + 1}/{max_steps} — Brain deciding next action...")
 
             action, action_data, debug_note = self.agent.decide_action(
-                game_id, level, s0_state, current_state, valid_actions, debug_note
+                game_id, level, s0_state, current_state, current_valid_actions, debug_note
             )
 
             step_count += 1
@@ -324,7 +338,16 @@ class ARCRunner:
                 print(f"⚠️ [TIMEOUT MONITOR] Aborting Game {game_id} at Level {level} to preserve time budget.")
                 break
 
-            valid_actions = getattr(obs, "available_actions", None) or getattr(env, "action_space", [])
+            valid_actions = (
+                getattr(obs, "available_actions", None)
+                or getattr(obs, "action_space", None)
+                or (
+                    obs.metadata.get("available_actions")
+                    if hasattr(obs, "metadata") and isinstance(obs.metadata, dict)
+                    else None
+                )
+                or getattr(env, "action_space", [])
+            )
             dynamic_max_steps = get_max_steps_for_level(env, level, fallback_obs=obs)
 
             if max_steps_per_level is not None:
