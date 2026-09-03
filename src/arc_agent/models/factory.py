@@ -55,6 +55,16 @@ class ModelFactory:
         import json
         import importlib.util
         import transformers
+
+        # Compatibility hotfix for hf_api in transformers.utils
+        try:
+            import transformers.utils
+            if not hasattr(transformers.utils, "hf_api"):
+                from huggingface_hub import HfApi
+                transformers.utils.hf_api = HfApi
+        except Exception:
+            pass
+
         from transformers import (
             AutoConfig,
             AutoModel,
@@ -65,16 +75,41 @@ class ModelFactory:
             PretrainedConfig,
         )
 
-        # Base Gemma configuration & model classes
-        gemma_base_cfg = getattr(transformers, "Gemma2Config", GemmaConfig)
-        gemma_base_model = getattr(
-            transformers, "Gemma2ForCausalLM", getattr(transformers, "GemmaForCausalLM", None)
+        # Base Gemma configuration & model classes — prefer native Gemma4 classes in Transformers >= 5.10
+        gemma4_cfg_cls = getattr(transformers, "Gemma4Config", None)
+        gemma4_model_cls = getattr(
+            transformers,
+            "Gemma4ForConditionalGeneration",
+            getattr(transformers, "Gemma4ForCausalLM", None),
         )
+        gemma_base_cfg = gemma4_cfg_cls if gemma4_cfg_cls is not None else getattr(transformers, "Gemma2Config", GemmaConfig)
+        gemma_base_model = getattr(transformers, "Gemma2ForCausalLM", getattr(transformers, "GemmaForCausalLM", None))
 
-        # 1. Register 'gemma4' architecture directly with AutoConfig
+        # Patch Gemma4Config to add missing pad_token_id / eos_token_id defaults expected by Gemma2 internals
+        if gemma4_cfg_cls is not None and not hasattr(gemma4_cfg_cls, "_patched_pad_token"):
+            try:
+                _orig_gemma4_init = gemma4_cfg_cls.__init__
+                def _gemma4_init_patch(self, *args, **kwargs):
+                    _orig_gemma4_init(self, *args, **kwargs)
+                    if not hasattr(self, "pad_token_id") or self.pad_token_id is None:
+                        self.pad_token_id = getattr(self, "eos_token_id", 1)
+                    if not hasattr(self, "eos_token_id") or self.eos_token_id is None:
+                        self.eos_token_id = 1
+                gemma4_cfg_cls.__init__ = _gemma4_init_patch
+                gemma4_cfg_cls._patched_pad_token = True
+            except Exception:
+                pass
+
+        # 1. Register 'gemma4' with AutoConfig using the native Gemma4Config (if available) to avoid model_type mismatch warnings
         try:
-            AutoConfig.register("gemma4", gemma_base_cfg)
-            print("🔧 [MODEL FACTORY] Successfully mapped 'gemma4' model_type to Gemma configuration.")
+            if gemma4_cfg_cls is not None:
+                try:
+                    AutoConfig.register("gemma4", gemma4_cfg_cls, exist_ok=True)
+                except TypeError:
+                    AutoConfig.register("gemma4", gemma4_cfg_cls)
+            else:
+                AutoConfig.register("gemma4", gemma_base_cfg)
+            print("🔧 [MODEL FACTORY] Registered 'gemma4' in AutoConfig.")
         except Exception as e:
             print(f"ℹ️ AutoConfig registration note: {e}")
 
@@ -212,32 +247,43 @@ class ModelFactory:
         if config.attn_implementation and config.attn_implementation != "default":
             load_kwargs["attn_implementation"] = config.attn_implementation
 
-        # Tier 1: AutoModelForImageTextToText
-        try:
-            from transformers import AutoModelForImageTextToText
+        # Build load_kwargs without pre-passed config for Auto* loaders (let them resolve it natively)
+        load_kwargs_noconfig = {k: v for k, v in load_kwargs.items() if k != "config"}
 
-            model = AutoModelForImageTextToText.from_pretrained(model_id, **load_kwargs)
-            print("✅ Loaded as AutoModelForImageTextToText (multimodal vision-language model).")
-        except Exception as e:
-            print(f"ℹ️ AutoModelForImageTextToText note ({e}) -> trying AutoModelForCausalLM...")
+        # Tier 1: Gemma4ForConditionalGeneration (native, requires Transformers >= 5.10)
+        if gemma4_model_cls is not None:
+            try:
+                model = gemma4_model_cls.from_pretrained(model_id, **load_kwargs_noconfig)
+                print(f"✅ Loaded as {gemma4_model_cls.__name__} (native Gemma 4 class).")
+            except Exception as e:
+                print(f"ℹ️ {gemma4_model_cls.__name__} note ({e}) -> trying AutoModelForImageTextToText...")
 
-        # Tier 2: AutoModelForCausalLM
+        # Tier 2: AutoModelForImageTextToText
         if model is None:
             try:
-                model = AutoModelForCausalLM.from_pretrained(model_id, **load_kwargs)
+                from transformers import AutoModelForImageTextToText
+                model = AutoModelForImageTextToText.from_pretrained(model_id, **load_kwargs_noconfig)
+                print("✅ Loaded as AutoModelForImageTextToText (multimodal vision-language model).")
+            except Exception as e:
+                print(f"ℹ️ AutoModelForImageTextToText note ({e}) -> trying AutoModelForCausalLM...")
+
+        # Tier 3: AutoModelForCausalLM
+        if model is None:
+            try:
+                model = AutoModelForCausalLM.from_pretrained(model_id, **load_kwargs_noconfig)
                 print("✅ Loaded as AutoModelForCausalLM.")
             except Exception as e:
                 print(f"ℹ️ AutoModelForCausalLM note ({e}) -> trying AutoModel...")
 
-        # Tier 3: AutoModel
+        # Tier 4: AutoModel
         if model is None:
             try:
-                model = AutoModel.from_pretrained(model_id, **load_kwargs)
+                model = AutoModel.from_pretrained(model_id, **load_kwargs_noconfig)
                 print("✅ Loaded as AutoModel.")
             except Exception as e:
                 print(f"ℹ️ AutoModel note ({e}) -> trying direct Gemma2ForCausalLM loader...")
 
-        # Tier 4: Direct Gemma Architecture Fallback
+        # Tier 5: Direct Gemma2ForCausalLM fallback (last resort)
         if model is None and gemma_base_model is not None:
             try:
                 model = gemma_base_model.from_pretrained(model_id, **load_kwargs)
