@@ -83,7 +83,17 @@ class ARCLangChainAgent:
     ) -> Tuple[ARCState, ARCTransition, bool, bool]:
         """Executes action in environment, captures new state and updates spatial trajectory."""
         action_sig = ActionSignature.from_action(action, action_data)
-        raw_obs = env.step(action, **action_data) if action_data else env.step(action)
+        if action_data:
+            try:
+                raw_obs = env.step(action, data=action_data)
+            except TypeError:
+                try:
+                    raw_obs = env.step(action, **action_data)
+                except TypeError:
+                    raw_obs = env.step(action)
+        else:
+            raw_obs = env.step(action)
+
         new_state = ARCState.create(game_id, level, step_index, raw_obs, tag=tag)
         transition = compute_transition(prior_state, new_state, action_sig=action_sig)
 

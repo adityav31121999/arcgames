@@ -10,6 +10,8 @@ _COORD_RE = re.compile(r"\bX\s*[:=]\s*(-?\d+)\D+Y\s*[:=]\s*(-?\d+)", re.IGNORECA
 
 def is_complex_action(action: Any) -> bool:
     """Checks if action requires coordinates (e.g. Action 6)."""
+    if action == 6 or getattr(action, "value", None) == 6:
+        return True
     name = getattr(action, "name", str(action)).upper()
     if "ACTION_6" in name or "ACTION6" in name or "CLICK" in name:
         return True
@@ -21,6 +23,35 @@ def validate_coordinates(x: int, y: int, grid_shape: Tuple[int, int]) -> bool:
     """Validates (x, y) are within grid dimensions."""
     height, width = grid_shape
     return (0 <= y < height) and (0 <= x < width)
+
+
+def extract_coordinates(text: str, grid_shape: Optional[Tuple[int, int]] = None) -> Optional[Dict[str, int]]:
+    """Extracts (x, y) coordinates across multiple formats (e.g. X=12 Y=34, (12, 34), ACTION6 12 34)."""
+    # Pattern 1: X=12, Y=34
+    m1 = re.search(r"\bX\s*[:=]\s*(-?\d+)\D+Y\s*[:=]\s*(-?\d+)", text, re.IGNORECASE)
+    if m1:
+        x, y = int(m1.group(1)), int(m1.group(2))
+        if not grid_shape or validate_coordinates(x, y, grid_shape):
+            return {"x": x, "y": y}
+    # Pattern 2: Y=34, X=12
+    m2 = re.search(r"\bY\s*[:=]\s*(-?\d+)\D+X\s*[:=]\s*(-?\d+)", text, re.IGNORECASE)
+    if m2:
+        y, x = int(m2.group(1)), int(m2.group(2))
+        if not grid_shape or validate_coordinates(x, y, grid_shape):
+            return {"x": x, "y": y}
+    # Pattern 3: (12, 34) or [12, 34]
+    m3 = re.search(r"[(\[]\s*(-?\d+)\s*[, ]\s*(-?\d+)\s*[)\]]", text)
+    if m3:
+        x, y = int(m3.group(1)), int(m3.group(2))
+        if not grid_shape or validate_coordinates(x, y, grid_shape):
+            return {"x": x, "y": y}
+    # Pattern 4: ACTION6 12 34 or ACTION6 12, 34
+    m4 = re.search(r"(?:ACTION6|ACTION_6)[^\d\n]*?(\d+)\s*[, \t]+\s*(\d+)", text, re.IGNORECASE)
+    if m4:
+        x, y = int(m4.group(1)), int(m4.group(2))
+        if not grid_shape or validate_coordinates(x, y, grid_shape):
+            return {"x": x, "y": y}
+    return None
 
 
 @dataclass(frozen=True)
@@ -74,11 +105,9 @@ class ARCActionMapper:
             selected_action = candidate
             rest = m.group(2)
 
-            cm = _COORD_RE.search(rest) or _COORD_RE.search(response_text)
-            if cm:
-                x, y = int(cm.group(1)), int(cm.group(2))
-                if not grid_shape or validate_coordinates(x, y, grid_shape):
-                    action_data = {"x": x, "y": y}
+            coords = extract_coordinates(rest, grid_shape) or extract_coordinates(response_text, grid_shape)
+            if coords:
+                action_data = coords
 
             if is_complex_action(candidate) and not action_data:
                 return None, {}
@@ -95,11 +124,9 @@ class ARCActionMapper:
             ]
             if len(found) == 1:
                 selected_action = found[0]
-                cm = _COORD_RE.search(response_text)
-                if cm:
-                    x, y = int(cm.group(1)), int(cm.group(2))
-                    if not grid_shape or validate_coordinates(x, y, grid_shape):
-                        action_data = {"x": x, "y": y}
+                coords = extract_coordinates(response_text, grid_shape)
+                if coords:
+                    action_data = coords
             else:
                 return None, {}
 
