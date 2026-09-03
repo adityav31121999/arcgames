@@ -65,6 +65,31 @@ class ModelFactory:
         except Exception:
             pass
 
+        # Compatibility hotfix for safetensors.safe_open unexpected keyword argument 'backend'
+        try:
+            import safetensors
+            _orig_safe_open = safetensors.safe_open
+
+            def _compat_safe_open(*args, **kwargs):
+                try:
+                    return _orig_safe_open(*args, **kwargs)
+                except TypeError as te:
+                    if "backend" in str(te):
+                        kwargs.pop("backend", None)
+                        return _orig_safe_open(*args, **kwargs)
+                    raise te
+
+            safetensors.safe_open = _compat_safe_open
+            if hasattr(safetensors, "torch"):
+                safetensors.torch.safe_open = _compat_safe_open
+
+            import sys
+            for mod in list(sys.modules.values()):
+                if hasattr(mod, "safe_open") and getattr(mod, "safe_open") is _orig_safe_open:
+                    setattr(mod, "safe_open", _compat_safe_open)
+        except Exception as e:
+            pass
+
         from transformers import (
             AutoConfig,
             AutoModel,
