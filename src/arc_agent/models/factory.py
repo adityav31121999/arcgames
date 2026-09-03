@@ -137,7 +137,7 @@ class ModelFactory:
             try:
                 _TEXT_CFG_PROXIED = [
                     "vocab_size", "hidden_size", "num_hidden_layers", "num_attention_heads",
-                    "num_key_value_heads", "intermediate_size", "head_dim", "rms_norm_eps",
+                    "num_key_value_heads", "intermediate_size", "rms_norm_eps",
                 ]
                 def _make_proxy(attr):
                     def _proxy(self):
@@ -154,6 +154,7 @@ class ModelFactory:
                     if not hasattr(gemma4_cfg_cls, _attr):
                         setattr(gemma4_cfg_cls, _attr, _make_proxy(_attr))
 
+                setattr(gemma4_cfg_cls, "allow_global_per_layer_attribute_access", True)
                 gemma4_cfg_cls._patched_vocab_proxy = True
                 print("🔧 [MODEL FACTORY] Patched Gemma4Config with text_config attribute proxies.")
             except Exception as _proxy_exc:
@@ -262,15 +263,26 @@ class ModelFactory:
 
         cfg = None
         try:
-            cfg = AutoConfig.from_pretrained(model_id, trust_remote_code=config.trust_remote_code)
+            cfg = AutoConfig.from_pretrained(
+                model_id,
+                trust_remote_code=config.trust_remote_code,
+                allow_global_per_layer_attribute_access=True,
+            )
         except Exception as e:
             print(f"ℹ️ AutoConfig.from_pretrained note ({e}) -> trying gemma_base_cfg...")
             try:
-                cfg = gemma_base_cfg.from_pretrained(model_id, trust_remote_code=config.trust_remote_code)
+                cfg = gemma_base_cfg.from_pretrained(
+                    model_id,
+                    trust_remote_code=config.trust_remote_code,
+                    allow_global_per_layer_attribute_access=True,
+                )
             except Exception:
                 pass
 
         if cfg is not None:
+            setattr(cfg, "allow_global_per_layer_attribute_access", True)
+            if hasattr(cfg, "text_config") and hasattr(cfg.text_config, "allow_global_per_layer_attribute_access"):
+                setattr(cfg.text_config, "allow_global_per_layer_attribute_access", True)
             # Fix text_config if raw dict is returned
             if hasattr(cfg, "text_config") and isinstance(cfg.text_config, dict):
                 try:
