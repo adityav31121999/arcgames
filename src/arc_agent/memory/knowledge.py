@@ -23,9 +23,16 @@ def read_text(path: Path, default: str = "") -> str:
 
 
 def append_text(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(text.rstrip() + "\n\n")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(text.rstrip() + "\n\n")
+    except OSError as e:
+        # Gracefully handle [Errno 28] No space left on device so in-memory execution continues
+        if getattr(e, "errno", None) == 28:
+            pass
+        else:
+            raise
 
 
 def tail_text(text: str, max_chars: int = 2500) -> str:
@@ -33,17 +40,20 @@ def tail_text(text: str, max_chars: int = 2500) -> str:
 
 
 def update_verified_mechanics(game_id: str, rule: str, memory_root: str | Path = "./agent_memory") -> None:
-    s_path = scratchpad_path(game_id, memory_root)
-    if not s_path.exists():
-        return
-    content = s_path.read_text(encoding="utf-8", errors="ignore")
-    target_header = "## VERIFIED MECHANICS AND RULES"
-    if target_header in content:
-        parts = content.split(target_header)
-        updated_content = parts[0] + target_header + "\n" + parts[1].strip() + f"\n- {rule}\n"
-        s_path.write_text(updated_content, encoding="utf-8")
-    else:
-        append_text(s_path, f"\n## VERIFIED MECHANICS AND RULES\n- {rule}")
+    try:
+        s_path = scratchpad_path(game_id, memory_root)
+        if not s_path.exists():
+            return
+        content = s_path.read_text(encoding="utf-8", errors="ignore")
+        target_header = "## VERIFIED MECHANICS AND RULES"
+        if target_header in content:
+            parts = content.split(target_header)
+            updated_content = parts[0] + target_header + "\n" + parts[1].strip() + f"\n- {rule}\n"
+            s_path.write_text(updated_content, encoding="utf-8")
+        else:
+            append_text(s_path, f"\n## VERIFIED MECHANICS AND RULES\n- {rule}")
+    except OSError:
+        pass
 
 
 
