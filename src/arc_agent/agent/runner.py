@@ -7,6 +7,7 @@ from ..core.actions import ARCActionMapper
 from ..core.diff import extract_grid_array, get_grid_difference_text
 from ..core.state import ARCState
 from ..memory.knowledge import maybe_append_rule, update_verified_mechanics
+from ..utils.display import render_live
 
 
 from .arc_langchain_agent import ARCLangChainAgent
