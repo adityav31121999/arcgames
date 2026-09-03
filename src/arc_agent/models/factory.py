@@ -68,15 +68,17 @@ class ModelFactory:
         # Compatibility hotfix for safetensors.safe_open unexpected keyword argument 'backend'
         try:
             import safetensors
-            _orig_safe_open = safetensors.safe_open
+            if not hasattr(safetensors, "_raw_unpatched_safe_open"):
+                safetensors._raw_unpatched_safe_open = safetensors.safe_open
+            _raw_safe_open = safetensors._raw_unpatched_safe_open
 
-            def _compat_safe_open(*args, **kwargs):
+            def _compat_safe_open(*args, _target_fn=_raw_safe_open, **kwargs):
                 try:
-                    return _orig_safe_open(*args, **kwargs)
+                    return _target_fn(*args, **kwargs)
                 except TypeError as te:
                     if "backend" in str(te):
                         kwargs.pop("backend", None)
-                        return _orig_safe_open(*args, **kwargs)
+                        return _target_fn(*args, **kwargs)
                     raise te
 
             safetensors.safe_open = _compat_safe_open
@@ -85,9 +87,13 @@ class ModelFactory:
 
             import sys
             for mod in list(sys.modules.values()):
-                if hasattr(mod, "safe_open") and getattr(mod, "safe_open") is _orig_safe_open:
-                    setattr(mod, "safe_open", _compat_safe_open)
-        except Exception as e:
+                if mod and hasattr(mod, "safe_open") and getattr(mod, "safe_open") is not _compat_safe_open:
+                    try:
+                        setattr(mod, "safe_open", _compat_safe_open)
+                    except Exception:
+                        pass
+            safetensors._patched_safe_open = True
+        except Exception:
             pass
 
         from transformers import (
@@ -113,21 +119,32 @@ class ModelFactory:
         # Patch Gemma4Config:
         # - Add pad_token_id / eos_token_id defaults so GenerationConfig doesn't crash
         # - Proxy vocab_size / hidden_size / etc. from text_config so Gemma2 internals don't crash
-        if gemma4_cfg_cls is not None and not hasattr(gemma4_cfg_cls, "_patched_pad_token"):
+        if gemma4_cfg_cls is not None and not hasattr(gemma4_cfg_cls, "_patched_pad_done"):
             try:
-                _orig_gemma4_init = gemma4_cfg_cls.__init__
-                def _gemma4_init_patch(self, *args, **kwargs):
-                    _orig_gemma4_init(self, *args, **kwargs)
+                _curr_init = gemma4_cfg_cls.__init__
+                _orig_init = getattr(gemma4_cfg_cls, "_orig_raw_init", _curr_init)
+                gemma4_cfg_cls._orig_raw_init = _orig_init
+
+                def _gemma4_init_patch(self, *args, _init_fn=_orig_init, **kwargs):
+                    setattr(self, "allow_global_per_layer_attribute_access", True)
+                    _init_fn(self, *args, **kwargs)
+                    setattr(self, "allow_global_per_layer_attribute_access", True)
+                    for _tok in ("pad_token_id", "eos_token_id", "bos_token_id"):
+                        val = getattr(self, _tok, None)
+                        if isinstance(val, (list, tuple)):
+                            setattr(self, _tok, val[0] if val else 0)
                     if not hasattr(self, "pad_token_id") or self.pad_token_id is None:
                         eos = getattr(self, "eos_token_id", 1)
-                        self.pad_token_id = eos[0] if isinstance(eos, (list, tuple)) else eos
+                        self.pad_token_id = eos[0] if isinstance(eos, (list, tuple)) else (eos or 0)
                     if not hasattr(self, "eos_token_id") or self.eos_token_id is None:
                         self.eos_token_id = 1
-                    # Ensure pad_token_id is always a plain int (never a list)
                     if isinstance(self.pad_token_id, (list, tuple)):
-                        self.pad_token_id = self.pad_token_id[0] if self.pad_token_id else 1
+                        self.pad_token_id = self.pad_token_id[0] if self.pad_token_id else 0
+
                 gemma4_cfg_cls.__init__ = _gemma4_init_patch
+                gemma4_cfg_cls._patched_pad_done = True
                 gemma4_cfg_cls._patched_pad_token = True
+                gemma4_cfg_cls._patched_pad_int = True
             except Exception:
                 pass
 
@@ -142,9 +159,12 @@ class ModelFactory:
                 def _make_proxy(attr):
                     def _proxy(self):
                         text_cfg = getattr(self, "text_config", None)
-                        if text_cfg is not None and not isinstance(text_cfg, dict):
-                            return getattr(text_cfg, attr, None)
-                        if isinstance(text_cfg, dict):
+                        if text_cfg is not None and text_cfg is not self and not isinstance(text_cfg, dict):
+                            if hasattr(text_cfg, "__dict__") and attr in text_cfg.__dict__:
+                                return text_cfg.__dict__[attr]
+                            if not isinstance(text_cfg, gemma4_cfg_cls):
+                                return getattr(text_cfg, attr, None)
+                        elif isinstance(text_cfg, dict):
                             return text_cfg.get(attr)
                         return None
                     _proxy.__name__ = attr
@@ -214,8 +234,19 @@ class ModelFactory:
         # Monkey-patch GenerationConfig globally to handle list pad_token_id and raw text_config dicts
         try:
             from transformers.generation.configuration_utils import GenerationConfig
-            orig_from_model_config = GenerationConfig.from_model_config
-            orig_from_dict = GenerationConfig.from_dict
+            if not hasattr(GenerationConfig, "_orig_raw_fmc"):
+                GenerationConfig._orig_raw_fmc = GenerationConfig.from_model_config
+            if not hasattr(GenerationConfig, "_orig_raw_fd"):
+                GenerationConfig._orig_raw_fd = GenerationConfig.from_dict
+            if not hasattr(GenerationConfig, "_orig_raw_validate"):
+                GenerationConfig._orig_raw_validate = getattr(GenerationConfig, "validate", lambda s, *a, **k: None)
+            if not hasattr(GenerationConfig, "_orig_raw_init"):
+                GenerationConfig._orig_raw_init = GenerationConfig.__init__
+
+            _orig_from_model_config = GenerationConfig._orig_raw_fmc
+            _orig_from_dict = GenerationConfig._orig_raw_fd
+            _orig_validate = GenerationConfig._orig_raw_validate
+            _orig_gen_init = GenerationConfig._orig_raw_init
 
             def _sanitize_tokens_dict(d):
                 if not isinstance(d, dict):
@@ -227,12 +258,12 @@ class ModelFactory:
                 return d
 
             @classmethod
-            def patched_from_dict(cls, config_dict, **kwargs):
+            def patched_from_dict(cls, config_dict, _fd_fn=_orig_from_dict, **kwargs):
                 config_dict = _sanitize_tokens_dict(config_dict)
-                return orig_from_dict(config_dict, **kwargs)
+                return _fd_fn(config_dict, **kwargs)
 
             @classmethod
-            def patched_from_model_config(cls, model_config):
+            def patched_from_model_config(cls, model_config, _fmc_fn=_orig_from_model_config):
                 try:
                     if hasattr(model_config, "get_text_config"):
                         t_cfg = model_config.get_text_config(decoder=True)
@@ -248,16 +279,43 @@ class ModelFactory:
                     if isinstance(val, (list, tuple)):
                         setattr(model_config, attr_name, val[0] if len(val) > 0 and isinstance(val[0], int) else None)
 
+                if hasattr(model_config, "text_config"):
+                    t_cfg = getattr(model_config, "text_config")
+                    if hasattr(t_cfg, "pad_token_id") and isinstance(getattr(t_cfg, "pad_token_id"), (list, tuple)):
+                        t_cfg.pad_token_id = t_cfg.pad_token_id[0] if len(t_cfg.pad_token_id) > 0 else 0
+
                 try:
-                    return orig_from_model_config(model_config)
+                    gen_cfg = _fmc_fn(model_config)
                 except Exception as ae:
                     if "'dict' object has no attribute 'to_dict'" in str(ae) or "'<' not supported" in str(ae):
-                        # Fallback: construct default GenerationConfig safely
-                        return cls()
-                    raise ae
+                        gen_cfg = cls()
+                    else:
+                        raise ae
+
+                if isinstance(getattr(gen_cfg, "pad_token_id", None), (list, tuple)):
+                    gen_cfg.pad_token_id = gen_cfg.pad_token_id[0] if len(gen_cfg.pad_token_id) > 0 else 0
+                return gen_cfg
+
+            def patched_validate(self, *args, _val_fn=_orig_validate, **kwargs):
+                if isinstance(getattr(self, "pad_token_id", None), (list, tuple)):
+                    self.pad_token_id = self.pad_token_id[0] if len(self.pad_token_id) > 0 else 0
+                if isinstance(getattr(self, "bos_token_id", None), (list, tuple)):
+                    self.bos_token_id = self.bos_token_id[0] if len(self.bos_token_id) > 0 else 2
+                return _val_fn(self, *args, **kwargs)
+
+            def patched_init(self, *args, _init_fn=_orig_gen_init, **kwargs):
+                for k in ["pad_token_id", "bos_token_id"]:
+                    if k in kwargs and isinstance(kwargs[k], (list, tuple)):
+                        kwargs[k] = kwargs[k][0] if len(kwargs[k]) > 0 else 0
+                _init_fn(self, *args, **kwargs)
+                if isinstance(getattr(self, "pad_token_id", None), (list, tuple)):
+                    self.pad_token_id = self.pad_token_id[0] if len(self.pad_token_id) > 0 else 0
 
             GenerationConfig.from_model_config = patched_from_model_config
             GenerationConfig.from_dict = patched_from_dict
+            GenerationConfig.validate = patched_validate
+            GenerationConfig.__init__ = patched_init
+            GenerationConfig._patched_all_done = True
         except Exception as patch_exc:
             print(f"ℹ️ GenerationConfig patch note: {patch_exc}")
 
@@ -290,11 +348,12 @@ class ModelFactory:
                 except Exception:
                     pass
             # Ensure get_text_config returns a PretrainedConfig with .to_dict()
-            if hasattr(cfg, "get_text_config"):
-                orig_get_text = cfg.get_text_config
+            if hasattr(cfg, "get_text_config") and not hasattr(cfg, "_orig_get_text_config"):
+                cfg._orig_get_text_config = cfg.get_text_config
+                _orig_get_text = cfg._orig_get_text_config
 
-                def safe_get_text_config(*args, **kwargs):
-                    res = orig_get_text(*args, **kwargs)
+                def safe_get_text_config(*args, _orig_fn=_orig_get_text, **kwargs):
+                    res = _orig_fn(*args, **kwargs)
                     if isinstance(res, dict):
                         return gemma_base_cfg(**res)
                     return res
@@ -412,9 +471,6 @@ class ModelFactory:
                 f"Disk usage: {__import__('shutil').disk_usage('/tmp')}. "
                 f"Last config type: {type(cfg).__name__ if cfg else 'None'}"
             )
-
-
-
 
         model.eval()
 
