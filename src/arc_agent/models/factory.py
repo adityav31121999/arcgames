@@ -150,11 +150,26 @@ class ModelFactory:
                 except Exception as exc:
                     print(f"⚠️ Custom module load note ({py_file.name}): {exc}")
 
-        # 3. Load and sanitize model configuration (resolving 'dict' object has no attribute 'to_dict')
-        # Monkey-patch GenerationConfig.from_model_config globally to handle cases where model_config.get_text_config() returns a dict
+        # 3. Load and sanitize model configuration (resolving 'dict' object has no attribute 'to_dict' and list pad_token_id)
+        # Monkey-patch GenerationConfig globally to handle list pad_token_id and raw text_config dicts
         try:
             from transformers.generation.configuration_utils import GenerationConfig
             orig_from_model_config = GenerationConfig.from_model_config
+            orig_from_dict = GenerationConfig.from_dict
+
+            def _sanitize_tokens_dict(d):
+                if not isinstance(d, dict):
+                    return d
+                for k in ["pad_token_id", "eos_token_id", "bos_token_id"]:
+                    val = d.get(k)
+                    if isinstance(val, (list, tuple)):
+                        d[k] = val[0] if len(val) > 0 and isinstance(val[0], int) else None
+                return d
+
+            @classmethod
+            def patched_from_dict(cls, config_dict, **kwargs):
+                config_dict = _sanitize_tokens_dict(config_dict)
+                return orig_from_dict(config_dict, **kwargs)
 
             @classmethod
             def patched_from_model_config(cls, model_config):
@@ -166,15 +181,23 @@ class ModelFactory:
                             model_config.text_config = gemma_base_cfg(**t_cfg)
                 except Exception:
                     pass
+
+                # Sanitize token IDs if they are lists (e.g. [1, 2] -> 1)
+                for attr_name in ["pad_token_id", "eos_token_id", "bos_token_id"]:
+                    val = getattr(model_config, attr_name, None)
+                    if isinstance(val, (list, tuple)):
+                        setattr(model_config, attr_name, val[0] if len(val) > 0 and isinstance(val[0], int) else None)
+
                 try:
                     return orig_from_model_config(model_config)
-                except AttributeError as ae:
-                    if "'dict' object has no attribute 'to_dict'" in str(ae):
-                        # Fallback: construct GenerationConfig from empty or base dictionary
+                except Exception as ae:
+                    if "'dict' object has no attribute 'to_dict'" in str(ae) or "'<' not supported" in str(ae):
+                        # Fallback: construct default GenerationConfig safely
                         return cls()
                     raise ae
 
             GenerationConfig.from_model_config = patched_from_model_config
+            GenerationConfig.from_dict = patched_from_dict
         except Exception as patch_exc:
             print(f"ℹ️ GenerationConfig patch note: {patch_exc}")
 
@@ -256,9 +279,19 @@ class ModelFactory:
                 model = gemma4_model_cls.from_pretrained(model_id, **load_kwargs_noconfig)
                 print(f"✅ Loaded as {gemma4_model_cls.__name__} (native Gemma 4 class).")
             except Exception as e:
-                print(f"ℹ️ {gemma4_model_cls.__name__} note ({e}) -> trying AutoModelForImageTextToText...")
+                print(f"ℹ️ {gemma4_model_cls.__name__} note ({e}) -> trying AutoModelForMultimodalLM...")
 
-        # Tier 2: AutoModelForImageTextToText
+        # Tier 2: AutoModelForMultimodalLM (new standard for omni/any-to-any multimodal models in Transformers 5+)
+        if model is None:
+            try:
+                AutoModelForMultimodalLM = getattr(transformers, "AutoModelForMultimodalLM", None)
+                if AutoModelForMultimodalLM is not None:
+                    model = AutoModelForMultimodalLM.from_pretrained(model_id, **load_kwargs_noconfig)
+                    print("✅ Loaded as AutoModelForMultimodalLM.")
+            except Exception as e:
+                print(f"ℹ️ AutoModelForMultimodalLM note ({e}) -> trying AutoModelForImageTextToText...")
+
+        # Tier 3: AutoModelForImageTextToText
         if model is None:
             try:
                 from transformers import AutoModelForImageTextToText
@@ -267,7 +300,7 @@ class ModelFactory:
             except Exception as e:
                 print(f"ℹ️ AutoModelForImageTextToText note ({e}) -> trying AutoModelForCausalLM...")
 
-        # Tier 3: AutoModelForCausalLM
+        # Tier 4: AutoModelForCausalLM
         if model is None:
             try:
                 model = AutoModelForCausalLM.from_pretrained(model_id, **load_kwargs_noconfig)
@@ -275,7 +308,7 @@ class ModelFactory:
             except Exception as e:
                 print(f"ℹ️ AutoModelForCausalLM note ({e}) -> trying AutoModel...")
 
-        # Tier 4: AutoModel
+        # Tier 5: AutoModel
         if model is None:
             try:
                 model = AutoModel.from_pretrained(model_id, **load_kwargs_noconfig)
@@ -283,7 +316,7 @@ class ModelFactory:
             except Exception as e:
                 print(f"ℹ️ AutoModel note ({e}) -> trying direct Gemma2ForCausalLM loader...")
 
-        # Tier 5: Direct Gemma2ForCausalLM fallback (last resort)
+        # Tier 6: Direct Gemma2ForCausalLM fallback (last resort)
         if model is None and gemma_base_model is not None:
             try:
                 model = gemma_base_model.from_pretrained(model_id, **load_kwargs)
