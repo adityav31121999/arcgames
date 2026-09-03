@@ -139,21 +139,54 @@ class GemmaTransformersChatModel(BaseChatModel):
         target_device = torch.device(self.device if torch.cuda.is_available() else "cpu")
         inputs = {k: v.to(target_device) for k, v in inputs.items()}
 
-        max_new_tokens = kwargs.get("max_new_tokens", kwargs.get("max_tokens", 256))
+        max_new_tokens = kwargs.get("max_new_tokens", kwargs.get("max_tokens", 48))
         temperature = kwargs.get("temperature", self.temperature)
         top_p = kwargs.get("top_p", self.top_p)
         repetition_penalty = kwargs.get("repetition_penalty", self.repeat_penalty)
 
         do_sample = temperature > 0.01
 
+        # Real-time stopping criteria so generate() stops immediately on stop token / newline
+        tokenizer = getattr(self.processor, "tokenizer", self.processor)
+        stopping_criteria_list = None
+        if stop and tokenizer is not None:
+            from transformers import StoppingCriteria, StoppingCriteriaList
+
+            stop_token_ids = []
+            for s in stop:
+                try:
+                    tok_ids = tokenizer.encode(s, add_special_tokens=False)
+                    if tok_ids:
+                        stop_token_ids.append(tok_ids)
+                except Exception:
+                    pass
+
+            if stop_token_ids:
+                class CustomStopCriteria(StoppingCriteria):
+                    def __init__(self, stop_sequences):
+                        self.stop_sequences = stop_sequences
+
+                    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **c_kwargs) -> bool:
+                        for seq in self.stop_sequences:
+                            if len(input_ids[0]) >= len(seq) and input_ids[0][-len(seq):].tolist() == seq:
+                                return True
+                        return False
+
+                stopping_criteria_list = StoppingCriteriaList([CustomStopCriteria(stop_token_ids)])
+
         with torch.inference_mode():
             generate_kwargs = {
                 "max_new_tokens": max_new_tokens,
-                "repetition_penalty": repetition_penalty,
-                "pad_token_id": self.processor.tokenizer.pad_token_id
-                if hasattr(self.processor, "tokenizer") and self.processor.tokenizer.pad_token_id is not None
-                else 0,
+                "use_cache": True,
+                "pad_token_id": (
+                    lambda p: p[0] if isinstance(p, (list, tuple)) else (p if p is not None else 0)
+                )(getattr(tokenizer, "pad_token_id", 0)),
             }
+            if repetition_penalty and repetition_penalty > 1.0:
+                generate_kwargs["repetition_penalty"] = repetition_penalty
+            if stopping_criteria_list is not None:
+                generate_kwargs["stopping_criteria"] = stopping_criteria_list
+
             if do_sample:
                 generate_kwargs["do_sample"] = True
                 generate_kwargs["temperature"] = temperature
@@ -165,11 +198,9 @@ class GemmaTransformersChatModel(BaseChatModel):
 
         input_len = inputs["input_ids"].shape[-1]
         generated_ids = output_ids[0][input_len:]
-        
-        tokenizer = getattr(self.processor, "tokenizer", self.processor)
         decoded_text = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
 
-        # Handle stop sequences if specified
+        # Handle stop sequences cleanup if specified
         if stop:
             for s in stop:
                 if s in decoded_text:

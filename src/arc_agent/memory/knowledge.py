@@ -78,8 +78,11 @@ class KnowledgeCache:
     def write_scratch(self, game_id: str, text: str) -> None:
         self._scratch[game_id] = text
         p = scratchpad_path(game_id, self.memory_root)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(text, encoding="utf-8")
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text, encoding="utf-8")
+        except OSError:
+            pass
 
     def ostate(self, game_id: str, max_chars: int = 1500) -> str:
         if game_id not in self._ostate:
@@ -100,8 +103,12 @@ class KnowledgeCache:
         key = (game_id, level)
         self._actions[key] = self._actions.get(key, "") + text
         p = actions_log_path(game_id, level, self.memory_root)
-        with open(p, "a", encoding="utf-8") as f:
-            f.write(text)
+        try:
+            with open(p, "a", encoding="utf-8") as f:
+                f.write(text)
+        except OSError as e:
+            if getattr(e, "errno", None) != 28:
+                raise
 
     def refresh_level(self, game_id: str, level: int) -> None:
         self._scratch[game_id] = read_text(scratchpad_path(game_id, self.memory_root))
@@ -115,33 +122,36 @@ def init_knowledge_files(
     valid_actions: Optional[list] = None,
     memory_root: str | Path = "./agent_memory",
 ) -> None:
-    s_path = scratchpad_path(game_id, memory_root)
-    if not s_path.exists():
-        s_path.parent.mkdir(parents=True, exist_ok=True)
-        s_path.write_text(
-            f"# Scratchpad — Game: {game_id}\n\n"
-            "## OBJECTIVE\nTo be inferred from S0\n\n"
-            "## HYPOTHESES & ASSUMPTIONS\n- Observing initial level layout\n\n"
-            "## VERIFIED MECHANICS AND RULES\n- Confirmed rules from completed levels carry over here\n",
-            encoding="utf-8",
-        )
+    try:
+        s_path = scratchpad_path(game_id, memory_root)
+        if not s_path.exists():
+            s_path.parent.mkdir(parents=True, exist_ok=True)
+            s_path.write_text(
+                f"# Scratchpad — Game: {game_id}\n\n"
+                "## OBJECTIVE\nTo be inferred from S0\n\n"
+                "## HYPOTHESES & ASSUMPTIONS\n- Observing initial level layout\n\n"
+                "## VERIFIED MECHANICS AND RULES\n- Confirmed rules from completed levels carry over here\n",
+                encoding="utf-8",
+            )
 
-    o_path = ostate_path(game_id, memory_root)
-    if not o_path.exists():
-        o_path.parent.mkdir(parents=True, exist_ok=True)
-        o_path.write_text(f"# Cross-Level S0 Analysis ({game_id})\n\n", encoding="utf-8")
+        o_path = ostate_path(game_id, memory_root)
+        if not o_path.exists():
+            o_path.parent.mkdir(parents=True, exist_ok=True)
+            o_path.write_text(f"# Cross-Level S0 Analysis ({game_id})\n\n", encoding="utf-8")
 
-    a_path = actions_log_path(game_id, level, memory_root)
-    if not a_path.exists():
-        action_names = [getattr(a, "name", str(a)) for a in (valid_actions or [])]
-        a_path.write_text(
-            f"# Actions Log — Game: {game_id}, Level: {level}\n\n"
-            f"## ALLOWABLE ACTIONS FOR THIS GAME\n"
-            f"{', '.join(action_names) if action_names else 'Not specified'}\n\n"
-            "| Step | Time | Action | Hash Shift |\n"
-            "|------|------|--------|------------|\n",
-            encoding="utf-8",
-        )
+        a_path = actions_log_path(game_id, level, memory_root)
+        if not a_path.exists():
+            action_names = [getattr(a, "name", str(a)) for a in (valid_actions or [])]
+            a_path.write_text(
+                f"# Actions Log — Game: {game_id}, Level: {level}\n\n"
+                f"## ALLOWABLE ACTIONS FOR THIS GAME\n"
+                f"{', '.join(action_names) if action_names else 'Not specified'}\n\n"
+                "| Step | Time | Action | Hash Shift |\n"
+                "|------|------|--------|------------|\n",
+                encoding="utf-8",
+            )
+    except OSError:
+        pass
 
 
 def maybe_append_rule(

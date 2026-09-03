@@ -229,8 +229,11 @@ def save_step_state_json(
 ) -> Path:
     """Saves raw JSON observation metadata of a specific step to disk."""
     level_dir = Path(memory_root) / str(game_id) / f"level_{level}"
-    level_dir.mkdir(parents=True, exist_ok=True)
     json_path = level_dir / f"s{step_index}_metadata.json"
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(state.json_data, f, indent=2)
+    try:
+        level_dir.mkdir(parents=True, exist_ok=True)
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(state.json_data, f, indent=2)
+    except OSError:
+        pass
     return json_path

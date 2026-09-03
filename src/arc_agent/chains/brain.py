@@ -1,6 +1,6 @@
 """Brain decision-making and macro-planning chain for ARC-AGI-3 Agent."""
 
-from typing import Any, List
+from typing import Any, List, Optional
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -16,17 +16,19 @@ class BrainChain:
         self.model = model
         self.max_tokens = max_tokens
 
-    def _invoke(self, prompt: str, temperature: float = 0.1, max_tokens: int = 256) -> str:
+    def _invoke(self, prompt: str, temperature: float = 0.0, max_tokens: int = 32, stop: Optional[List[str]] = None) -> str:
         messages = [
             SystemMessage(content=SYSTEM_PROMPT),
             HumanMessage(content=prompt),
         ]
         try:
-            response = self.model.invoke(
-                messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
+            invoke_kwargs = {
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+            if stop:
+                invoke_kwargs["stop"] = stop
+            response = self.model.invoke(messages, **invoke_kwargs)
             return str(response.content).strip()
         except Exception as e:
             return f"[BRAIN INFERENCE FAILED: {type(e).__name__}: {e}]"
@@ -70,7 +72,7 @@ Legal actions (Prohibited/redundant ones are already filtered - choose from this
 Reply strictly in format: ACTION=<NAME> [X=<int> Y=<int>]
 Next action:"""
 
-        return self._invoke(prompt, temperature=0.1, max_tokens=self.max_tokens)
+        return self._invoke(prompt, temperature=0.0, max_tokens=min(32, self.max_tokens), stop=["\n"])
 
     def one_shot_plan(
         self,
@@ -99,4 +101,4 @@ Valid Actions: {valid_names}
 
 Ordered action sequence:"""
 
-        return self._invoke(prompt, temperature=0.0, max_tokens=self.max_tokens * 3)
+        return self._invoke(prompt, temperature=0.0, max_tokens=256)

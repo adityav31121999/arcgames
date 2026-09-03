@@ -84,7 +84,7 @@ class ARCRunner:
             if steps_used >= max_steps:
                 break
 
-            if action not in self.agent.memory.get_allowed_actions(prior_state.state_hash, [action]):
+            if action not in self.agent.memory.get_allowed_actions(prior_state.state_hash, valid_actions):
                 break
 
             steps_used += 1

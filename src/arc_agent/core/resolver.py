@@ -31,7 +31,7 @@ class GameStateResolver:
     def is_level_up(self, state: Any) -> bool:
         if self.LEVEL_UP is not None and state == self.LEVEL_UP:
             return True
-        return str(state).upper() in ("LEVEL_UP", "GAMESTATE.LEVEL_UP", "NEXT_LEVEL")
+        return str(state).upper() in ("LEVEL_UP", "GAMESTATE.LEVEL_UP", "NEXT_LEVEL", "LEVEL_COMPLETE", "GAMESTATE.LEVEL_COMPLETE")
 
     def is_terminal(self, state: Any) -> bool:
         return self.is_win(state) or self.is_game_over(state) or self.is_level_up(state)

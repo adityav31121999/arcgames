@@ -110,20 +110,54 @@ class ModelFactory:
         gemma_base_cfg = gemma4_cfg_cls if gemma4_cfg_cls is not None else getattr(transformers, "Gemma2Config", GemmaConfig)
         gemma_base_model = getattr(transformers, "Gemma2ForCausalLM", getattr(transformers, "GemmaForCausalLM", None))
 
-        # Patch Gemma4Config to add missing pad_token_id / eos_token_id defaults expected by Gemma2 internals
+        # Patch Gemma4Config:
+        # - Add pad_token_id / eos_token_id defaults so GenerationConfig doesn't crash
+        # - Proxy vocab_size / hidden_size / etc. from text_config so Gemma2 internals don't crash
         if gemma4_cfg_cls is not None and not hasattr(gemma4_cfg_cls, "_patched_pad_token"):
             try:
                 _orig_gemma4_init = gemma4_cfg_cls.__init__
                 def _gemma4_init_patch(self, *args, **kwargs):
                     _orig_gemma4_init(self, *args, **kwargs)
                     if not hasattr(self, "pad_token_id") or self.pad_token_id is None:
-                        self.pad_token_id = getattr(self, "eos_token_id", 1)
+                        eos = getattr(self, "eos_token_id", 1)
+                        self.pad_token_id = eos[0] if isinstance(eos, (list, tuple)) else eos
                     if not hasattr(self, "eos_token_id") or self.eos_token_id is None:
                         self.eos_token_id = 1
+                    # Ensure pad_token_id is always a plain int (never a list)
+                    if isinstance(self.pad_token_id, (list, tuple)):
+                        self.pad_token_id = self.pad_token_id[0] if self.pad_token_id else 1
                 gemma4_cfg_cls.__init__ = _gemma4_init_patch
                 gemma4_cfg_cls._patched_pad_token = True
             except Exception:
                 pass
+
+        # Proxy vocab_size and related attrs from text_config so Gemma2/dense model internals don't crash
+        # when accidentally called with a Gemma4Config (multimodal) object.
+        if gemma4_cfg_cls is not None and not hasattr(gemma4_cfg_cls, "_patched_vocab_proxy"):
+            try:
+                _TEXT_CFG_PROXIED = [
+                    "vocab_size", "hidden_size", "num_hidden_layers", "num_attention_heads",
+                    "num_key_value_heads", "intermediate_size", "head_dim", "rms_norm_eps",
+                ]
+                def _make_proxy(attr):
+                    def _proxy(self):
+                        text_cfg = getattr(self, "text_config", None)
+                        if text_cfg is not None and not isinstance(text_cfg, dict):
+                            return getattr(text_cfg, attr, None)
+                        if isinstance(text_cfg, dict):
+                            return text_cfg.get(attr)
+                        return None
+                    _proxy.__name__ = attr
+                    return property(_proxy)
+
+                for _attr in _TEXT_CFG_PROXIED:
+                    if not hasattr(gemma4_cfg_cls, _attr):
+                        setattr(gemma4_cfg_cls, _attr, _make_proxy(_attr))
+
+                gemma4_cfg_cls._patched_vocab_proxy = True
+                print("🔧 [MODEL FACTORY] Patched Gemma4Config with text_config attribute proxies.")
+            except Exception as _proxy_exc:
+                print(f"ℹ️ Gemma4Config proxy patch note: {_proxy_exc}")
 
         # 1. Register 'gemma4' with AutoConfig using the native Gemma4Config (if available) to avoid model_type mismatch warnings
         try:
@@ -292,11 +326,13 @@ class ModelFactory:
         if cfg is not None:
             load_kwargs["config"] = cfg
 
-        if config.attn_implementation and config.attn_implementation != "default":
-            load_kwargs["attn_implementation"] = config.attn_implementation
+        # Attempt to add attn_implementation — but test it first since sdpa may not be supported
+        # for this model/driver combination (Gemma4 MoE on some Transformers versions)
+        attn_impl = config.attn_implementation if config.attn_implementation and config.attn_implementation != "default" else None
 
         # Build load_kwargs without pre-passed config for Auto* loaders (let them resolve it natively)
-        load_kwargs_noconfig = {k: v for k, v in load_kwargs.items() if k != "config"}
+        # Also exclude attn_implementation for initial tier attempts — add it only if needed
+        load_kwargs_noconfig = {k: v for k, v in load_kwargs.items() if k not in ("config", "attn_implementation")}
 
         # Tier 1: Gemma4ForConditionalGeneration (native, requires Transformers >= 5.10)
         if gemma4_model_cls is not None:
@@ -341,13 +377,24 @@ class ModelFactory:
             except Exception as e:
                 print(f"ℹ️ AutoModel note ({e}) -> trying direct Gemma2ForCausalLM loader...")
 
-        # Tier 6: Direct Gemma2ForCausalLM fallback (last resort)
-        if model is None and gemma_base_model is not None:
+        # Tier 6: Direct Gemma2ForCausalLM fallback (last resort) — skip if cfg is Gemma4Config
+        # since Gemma2ForCausalLM needs vocab_size as a top-level attribute, which Gemma4Config doesn't have.
+        cfg_is_gemma4 = gemma4_cfg_cls is not None and isinstance(cfg, gemma4_cfg_cls)
+        if model is None and gemma_base_model is not None and not cfg_is_gemma4:
             try:
-                model = gemma_base_model.from_pretrained(model_id, **load_kwargs)
+                tier6_kwargs = {k: v for k, v in load_kwargs.items() if k != "attn_implementation"}
+                model = gemma_base_model.from_pretrained(model_id, **tier6_kwargs)
                 print("✅ Loaded directly via Gemma2ForCausalLM.")
             except Exception as e:
-                raise RuntimeError(f"All model loading tiers failed for '{model_id}': {e}")
+                print(f"ℹ️ Gemma2ForCausalLM final fallback note: {e}")
+
+        if model is None:
+            raise RuntimeError(
+                f"All model loading tiers failed for '{model_id}'. "
+                f"Check that transformers>=5.10 is installed for Gemma4ForConditionalGeneration support. "
+                f"Disk usage: {__import__('shutil').disk_usage('/tmp')}. "
+                f"Last config type: {type(cfg).__name__ if cfg else 'None'}"
+            )
 
 
 

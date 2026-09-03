@@ -45,6 +45,8 @@ class TrajectoryMemory:
             return
         gp_grid1 = get_gameplay_grid(grid1)
         gp_grid2 = get_gameplay_grid(grid2)
+        if gp_grid1 is None or gp_grid2 is None or gp_grid1.shape != gp_grid2.shape:
+            return
         diff = (gp_grid1 != gp_grid2)
         if not np.any(diff):
             return

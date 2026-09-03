@@ -24,13 +24,13 @@ class ModelConfig(BaseModel):
     attn_implementation: str = Field(default="sdpa", description="sdpa or flash_attention_2")
     max_context_length: int = Field(default=8192, description="Maximum context length")
     trust_remote_code: bool = Field(default=True)
-    temperature: float = Field(default=0.1)
+    temperature: float = Field(default=0.0)
     top_p: float = Field(default=0.95)
     repeat_penalty: float = Field(default=1.05)
-    max_new_tokens_eye: int = Field(default=1024)
-    max_new_tokens_debug: int = Field(default=512)
-    max_new_tokens_brain: int = Field(default=256)
-    max_new_tokens_review: int = Field(default=768)
+    max_new_tokens_eye: int = Field(default=256)
+    max_new_tokens_debug: int = Field(default=96)
+    max_new_tokens_brain: int = Field(default=32)
+    max_new_tokens_review: int = Field(default=256)
 
 
 class AgentConfig(BaseModel):
