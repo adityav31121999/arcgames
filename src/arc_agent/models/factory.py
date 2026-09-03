@@ -313,8 +313,13 @@ class ModelFactory:
                 )
                 print("✅ Loaded AutoTokenizer.")
             except Exception as e2:
-                print(f"⚠️ AutoTokenizer fallback loading: {e2}")
-                processor = AutoTokenizer.from_pretrained("google/gemma-2-9b-it")
+                print(f"⚠️ AutoTokenizer direct loading note: {e2}")
+                try:
+                    from transformers import GemmaTokenizerFast
+                    processor = GemmaTokenizerFast.from_pretrained(model_id)
+                    print("✅ Loaded GemmaTokenizerFast.")
+                except Exception as e3:
+                    raise RuntimeError(f"Could not load processor or tokenizer from local model '{model_id}': {e2} / {e3}")
 
         # 5. Multi-tier model loading with fallbacks
         model = None
