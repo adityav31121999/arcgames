@@ -42,6 +42,7 @@ class BrainChain:
         valid_actions: List[Any],
         context_note: str,
         cache: KnowledgeCache,
+        world_model_block: str = "",
     ) -> str:
         """Determines next discrete or complex coordinate action."""
         actions_log = cache.actions_log(game_id, level)
@@ -56,9 +57,10 @@ class BrainChain:
             )
 
         action_names = [getattr(a, "name", str(a)) for a in valid_actions]
+        world_model_section = f"\n{world_model_block}\n" if world_model_block else ""
 
         prompt = f"""{PROMPT_ACTION}
-
+{world_model_section}
 {grid_repr_context}
 
 JSON State Metadata:
@@ -69,10 +71,16 @@ Actions Log: {actions_log}
 Tracker/Loop/Sprite Context: {context_note}
 Legal actions (Prohibited/redundant ones are already filtered - choose from this list): {action_names}
 
+Optionally prefix with: Plan: <one sentence goal and next step>
 Reply strictly in format: ACTION=<NAME> [X=<int> Y=<int>]
 Next action:"""
 
-        return self._invoke(prompt, temperature=0.0, max_tokens=min(32, self.max_tokens), stop=["\n"])
+        return self._invoke(
+            prompt,
+            temperature=0.4,
+            max_tokens=min(128, self.max_tokens),
+            stop=["\n\n"],
+        )
 
     def one_shot_plan(
         self,
@@ -81,15 +89,17 @@ Next action:"""
         s0_state: ARCState,
         valid_actions: List[Any],
         cache: KnowledgeCache,
+        world_model_block: str = "",
     ) -> str:
         """Synthesizes speculative macro-plan sequence for rapid execution."""
         ostate = cache.ostate(game_id)
         scratch = cache.scratch(game_id)
         actions_log = cache.actions_log(game_id, level)
         valid_names = [getattr(a, "name", str(a)) for a in valid_actions]
+        world_model_section = f"\n{world_model_block}\n" if world_model_block else ""
 
         prompt = f"""{PROMPT_ACTION}
-
+{world_model_section}
 Synthesize a ONE-SHOT plan for Level {level}. Format EACH line strictly as:
 ACTION=<NAME> [X=<int> Y=<int>]
 

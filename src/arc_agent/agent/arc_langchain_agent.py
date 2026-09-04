@@ -17,6 +17,7 @@ from ..memory.knowledge import (
     maybe_append_rule,
 )
 from ..memory.trajectory import TrajectoryMemory
+from ..memory.world_model import WorldModel
 from ..utils.display import render_live
 
 
@@ -45,6 +46,7 @@ class ARCLangChainAgent:
 
         self.memory = TrajectoryMemory()
         self.cache = KnowledgeCache(memory_root=memory_root)
+        self.world_model = WorldModel()
 
     def enter_level(
         self,
@@ -63,10 +65,15 @@ class ARCLangChainAgent:
 
         render_live(s0_state, status="S0 Initial State Setup")
 
+        self.world_model.reset_level_fields()
+
         if is_first_level_of_game:
-            self.eye.assume(game_id, level, s0_state, self.cache)
+            eye_out = self.eye.assume(game_id, level, s0_state, self.cache)
         else:
-            self.eye.compare_assume(game_id, level, s0_state, self.cache)
+            eye_out = self.eye.compare_assume(game_id, level, s0_state, self.cache)
+
+        if eye_out:
+            self.world_model.update_from_text(eye_out)
 
         return s0_state
 
@@ -134,9 +141,20 @@ class ARCLangChainAgent:
         )
         prohibited = self.memory.tried_signatures(state_hash)
 
+        world_model_block = self.world_model.to_prompt_block()
+
         raw = self.brain.decide_action(
-            game_id, level, s0_state, current_state, allowed_actions, context_note, self.cache
+            game_id,
+            level,
+            s0_state,
+            current_state,
+            allowed_actions,
+            context_note,
+            self.cache,
+            world_model_block=world_model_block,
         )
+        if raw:
+            self.world_model.update_from_text(raw)
         action, action_data = ARCActionMapper.parse(raw, allowed_actions, grid_shape, prohibited=prohibited)
         if action is not None:
             return action, action_data, context_note
@@ -149,8 +167,17 @@ class ARCLangChainAgent:
             + f"Required format: ACTION=<NAME> [X=<int> Y=<int>]. Choose from: {valid_names}"
         )
         raw_retry = self.brain.decide_action(
-            game_id, level, s0_state, current_state, allowed_actions, retry_note, self.cache
+            game_id,
+            level,
+            s0_state,
+            current_state,
+            allowed_actions,
+            retry_note,
+            self.cache,
+            world_model_block=world_model_block,
         )
+        if raw_retry:
+            self.world_model.update_from_text(raw_retry)
         action, action_data = ARCActionMapper.parse(raw_retry, allowed_actions, grid_shape, prohibited=prohibited)
         if action is not None:
             return action, action_data, context_note

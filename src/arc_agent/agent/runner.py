@@ -48,9 +48,15 @@ def get_max_steps_for_level(env: Any, level: int, fallback_obs: Any = None) -> i
 class ARCRunner:
     """Executes single levels and multi-level sequential games."""
 
-    def __init__(self, agent: ARCLangChainAgent, time_budget_hours: float = 8.5):
+    def __init__(
+        self,
+        agent: ARCLangChainAgent,
+        time_budget_hours: float = 8.5,
+        max_iterations_per_level: int = 3,
+    ):
         self.agent = agent
         self.time_budget_hours = time_budget_hours
+        self.max_iterations_per_level = max_iterations_per_level
 
     def attempt_one_shot(
         self,
@@ -63,7 +69,10 @@ class ARCRunner:
     ) -> Tuple[ARCState, Optional[ARCState], Any, int, bool]:
         """Attempts speculative one-shot macro plan before falling back to step loop."""
         grid_shape = s0_state.grid.shape if s0_state.grid is not None else None
-        plan_text = self.agent.brain.one_shot_plan(game_id, level, s0_state, valid_actions, self.agent.cache)
+        world_model_block = self.agent.world_model.to_prompt_block()
+        plan_text = self.agent.brain.one_shot_plan(
+            game_id, level, s0_state, valid_actions, self.agent.cache, world_model_block=world_model_block
+        )
         plan = ARCActionMapper.parse_plan(plan_text, valid_actions, grid_shape)
 
         if not plan:
@@ -75,7 +84,7 @@ class ARCRunner:
         predecessor_of_prior: Optional[ARCState] = None
         initial_completed = s0_state.levels_completed
 
-        max_plan_execution = min(15, len(plan))
+        max_plan_execution = min(25, len(plan))
         for action, action_data in plan[:max_plan_execution]:
             if is_time_budget_exhausted(self.time_budget_hours):
                 print("⚠️ [TIMEOUT MONITOR] Time budget exhausted during speculative one-shot execution.")
@@ -224,6 +233,11 @@ class ARCRunner:
                 )
                 self.agent.memory.debugger_cache[transition_key] = debug_note
 
+            if visual_analysis:
+                self.agent.world_model.update_from_text(visual_analysis)
+            if debug_note:
+                self.agent.world_model.update_from_text(debug_note)
+
             is_visited_loop = next_state.state_hash in visited_hashes
             visited_hashes.add(next_state.state_hash)
             if is_visited_loop:
@@ -268,21 +282,23 @@ class ARCRunner:
         valid_actions: List[Any],
         max_steps: int = 50,
         is_first_level_of_game: bool = False,
-        max_iterations: int = 5,
+        max_iterations: Optional[int] = None,
     ) -> Tuple[Any, Any, int]:
-        """Plays a level with automatic retry iterations and failure meta-reviews."""
+        """Plays a level with automatic retry iterations (lives) and failure meta-reviews."""
+        iterations_limit = max_iterations if max_iterations is not None else self.max_iterations_per_level
         curr_obs = obs
         final_state, total_steps = None, 0
         state = None
 
-        for iteration in range(1, max_iterations + 1):
+        for iteration in range(1, iterations_limit + 1):
             if is_time_budget_exhausted(self.time_budget_hours):
                 print(f"⚠️ [TIMEOUT MONITOR] Skipping remaining retries for Level {level}.")
                 break
 
             if iteration > 1:
                 curr_obs = env.reset() if hasattr(env, "reset") else env.step(None)
-                self.agent.cache.append_action_log(game_id, level, f"\n### --- RETRY ITERATION {iteration} ---\n")
+                self.agent.world_model.reset_level_fields()
+                self.agent.cache.append_action_log(game_id, level, f"\n### --- RETRY ITERATION {iteration} (Life {iteration}/{iterations_limit}) ---\n")
 
             s0_state = self.agent.enter_level(
                 game_id, level, curr_obs, is_first_level_of_game, valid_actions
@@ -295,7 +311,7 @@ class ARCRunner:
                 return curr_state.raw_obs, state, steps_used
 
             if self.agent.resolver.is_game_over(state):
-                if iteration < max_iterations:
+                if iteration < iterations_limit:
                     self.agent.review_failed_iteration(game_id, level, iteration, s0_state, curr_state)
                 final_state = curr_state
                 continue
@@ -315,7 +331,7 @@ class ARCRunner:
             if self.agent.resolver.is_win(state) or self.agent.resolver.is_level_up(state):
                 return final_state.raw_obs, state, total_steps
 
-            if iteration < max_iterations:
+            if iteration < iterations_limit:
                 self.agent.review_failed_iteration(game_id, level, iteration, s0_state, final_state)
 
         return (final_state.raw_obs if final_state else curr_obs), state, total_steps
@@ -327,6 +343,7 @@ class ARCRunner:
         obs: Any = None,
         max_levels: int = 10,
         max_steps_per_level: Optional[int] = None,
+        max_iterations_per_level: Optional[int] = None,
     ) -> Any:
         """Executes full multi-level game progression."""
         if obs is None:
@@ -361,6 +378,7 @@ class ARCRunner:
                 valid_actions,
                 max_steps=dynamic_max_steps,
                 is_first_level_of_game=(level == 1),
+                max_iterations=max_iterations_per_level or self.max_iterations_per_level,
             )
 
             if self.agent.resolver.is_game_over(state) or self.agent.resolver.is_win(state):

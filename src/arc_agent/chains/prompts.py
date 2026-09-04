@@ -29,6 +29,15 @@ SYSTEM_PROMPT = (
     "- Check for shapes or colors that are not off compared to other regions and try to move player/object on it to see change.\n"
     "- There is a tracker in the game that checks number of total steps allowed and number of trials allowed for each level. "
     "Its on either edges with two paired rows or columns or it can be on any edges in certain games.\n"
+    "- Some games are logic or layout puzzles with no explicit player avatar. "
+    "Do not assume a player exists; the relevant state may be an object, region, "
+    "cursor, selector, or whole-board configuration.\n"
+    "- A common failure mode is treating a segmented edge bar (step counter/timer) "
+    "as clickable puzzle pieces. If a strip of small blocks sits flush against an "
+    "edge and only that strip changes — classify it as HUD/timer state, NOT an object.\n"
+    "- When you have a working plan, you may prefix with: 'Plan: <one sentence>'\n"
+    "- Optional labeled prefixes to help maintain working memory: "
+    "'World model:', 'Goal model:', 'Action model:', 'Recent findings:', 'Plan:'\n"
 )
 
 PROMPT_ASSUME = (

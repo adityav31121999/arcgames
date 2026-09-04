@@ -6,7 +6,7 @@ from typing import Any
 class GameStateResolver:
     """Safely checks terminal states and win/loss status."""
 
-    def __init__(self, game_state_enum: Any):
+    def __init__(self, game_state_enum: Any = None):
         self._enum = game_state_enum
         self.WIN = getattr(game_state_enum, "WIN", None)
         self.GAME_OVER = getattr(game_state_enum, "GAME_OVER", None)

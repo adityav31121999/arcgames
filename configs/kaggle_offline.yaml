@@ -6,19 +6,19 @@ model:
   attn_implementation: "sdpa"
   max_context_length: 4096
   trust_remote_code: true
-  temperature: 0.1
+  temperature: 0.0
   top_p: 0.95
-  max_new_tokens_eye: 1024
-  max_new_tokens_debug: 512
-  max_new_tokens_brain: 256
-  max_new_tokens_review: 768
+  max_new_tokens_eye: 256
+  max_new_tokens_debug: 96
+  max_new_tokens_brain: 128
+  max_new_tokens_review: 256
 
 agent:
   stuck_threshold: 3
   consecutive_action_threshold: 5
-  max_iterations_per_level: 5
+  max_iterations_per_level: 3
   max_levels_per_game: 10
-  speculative_plan_max_steps: 15
+  speculative_plan_max_steps: 25
   time_budget_hours: 8.2
   memory_root: "/kaggle/working/agent_memory"
   vision_cache_dir: "/tmp/agent_vision"

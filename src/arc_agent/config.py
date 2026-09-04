@@ -36,7 +36,7 @@ class ModelConfig(BaseModel):
 class AgentConfig(BaseModel):
     stuck_threshold: int = Field(default=3, description="Consecutive NOOP steps before breaking")
     consecutive_action_threshold: int = Field(default=5, description="Warning threshold for same action")
-    max_iterations_per_level: int = Field(default=5)
+    max_iterations_per_level: int = Field(default=3, description="Retry iterations (lives) per level")
     max_levels_per_game: int = Field(default=10)
     speculative_plan_max_steps: int = Field(default=15)
     time_budget_hours: float = Field(default=8.5)

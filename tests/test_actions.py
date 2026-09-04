@@ -75,3 +75,21 @@ def test_parse_plan():
     assert plan[0][0] == Action.ACTION1
     assert plan[1][0] == Action.ACTION4
     assert plan[2][0] == Action.ACTION2
+
+
+def test_action_mapper_coordinate_formats():
+    available = [Action.ACTION6]
+    grid_shape = (64, 64)
+
+    cases = [
+        ("ACTION=ACTION6 [X=10, Y=20]", {"x": 10, "y": 20}),
+        ("ACTION=ACTION6 Y=20 X=10", {"x": 10, "y": 20}),
+        ("ACTION=ACTION6 (5, 8)", {"x": 5, "y": 8}),
+        ("ACTION=ACTION6 [5, 8]", {"x": 5, "y": 8}),
+        ("ACTION=ACTION6 12 34", {"x": 12, "y": 34}),
+        ("ACTION=ACTION6 12, 34", {"x": 12, "y": 34}),
+    ]
+    for text, expected in cases:
+        act, data = ARCActionMapper.parse(text, available, grid_shape=grid_shape)
+        assert act == Action.ACTION6
+        assert data == expected

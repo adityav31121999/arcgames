@@ -472,6 +472,9 @@ class ModelFactory:
                 f"Last config type: {type(cfg).__name__ if cfg else 'None'}"
             )
 
+
+
+
         model.eval()
 
         return GemmaTransformersChatModel(
