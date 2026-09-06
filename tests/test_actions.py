@@ -93,3 +93,40 @@ def test_action_mapper_coordinate_formats():
         act, data = ARCActionMapper.parse(text, available, grid_shape=grid_shape)
         assert act == Action.ACTION6
         assert data == expected
+
+
+def test_agent_log_action_signature_formats(tmp_path):
+    from unittest.mock import MagicMock
+    from arc_agent.agent.arc_langchain_agent import ARCLangChainAgent
+
+    mock_chain = MagicMock()
+    agent = ARCLangChainAgent(
+        eye_chain=mock_chain,
+        debugger_chain=mock_chain,
+        brain_chain=mock_chain,
+        reviewer_chain=mock_chain,
+        resolver=MagicMock(),
+        memory_root=str(tmp_path / "memory"),
+        vision_cache_dir=str(tmp_path / "vision"),
+    )
+
+    # 1. ActionSignature created via from_action (data is tuple of pairs)
+    sig_tuple = ActionSignature.from_action(Action.ACTION6, {"x": 14, "y": 18})
+    assert isinstance(sig_tuple.data, tuple)
+    agent.log_action("test_game", 1, 1, sig_tuple, "hash_before_123", "hash_after_456")
+
+    # 2. ActionSignature without data
+    sig_simple = ActionSignature(name="ACTION1")
+    agent.log_action("test_game", 1, 2, sig_simple, "hash_before_123", "hash_after_456")
+
+    # 3. None action_sig
+    agent.log_action("test_game", 1, 3, None, "hash_before_123", "hash_after_456")
+
+    # Verify log content
+    log_file = tmp_path / "memory" / "test_game" / "level_1" / "actions.md"
+    assert log_file.exists()
+    content = log_file.read_text(encoding="utf-8")
+    assert "ACTION6(X=14 Y=18)" in content
+    assert "ACTION1" in content
+    assert "UNKNOWN" in content
+

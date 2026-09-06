@@ -324,10 +324,15 @@ class ARCLangChainAgent:
         """Appends step entry to markdown actions log."""
         ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
         if action_sig:
-            name = action_sig.name
-            if action_sig.data:
-                data_str = " ".join(f"{k.upper()}={v}" for k, v in action_sig.data.items())
-                action_name = f"{name}({data_str})"
+            name = getattr(action_sig, "name", str(action_sig))
+            data = getattr(action_sig, "data", None)
+            if data:
+                items = data.items() if hasattr(data, "items") else data
+                try:
+                    data_str = " ".join(f"{str(k).upper()}={v}" for k, v in items)
+                    action_name = f"{name}({data_str})"
+                except Exception:
+                    action_name = str(action_sig)
             else:
                 action_name = str(name)
         else:
