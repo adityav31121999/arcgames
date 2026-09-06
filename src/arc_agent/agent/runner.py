@@ -1,5 +1,6 @@
 """Game and level execution runner with timeout monitoring and closed-loop step loops."""
 
+import os
 from typing import Any, List, Optional, Tuple
 import time
 
@@ -7,10 +8,13 @@ from ..core.actions import ARCActionMapper
 from ..core.diff import extract_grid_array, get_grid_difference_text
 from ..core.state import ARCState
 from ..memory.knowledge import maybe_append_rule, update_verified_mechanics
-from ..utils.display import render_live
+from ..utils.display import render_live, reset_live_display
 
 
 from .arc_langchain_agent import ARCLangChainAgent
+
+# ARC-AGI engine flag: ensure RESET only resets the active level, preserving completed levels
+os.environ["ONLY_RESET_LEVELS"] = "true"
 
 GLOBAL_START_TIME = time.time()
 
@@ -22,31 +26,50 @@ def is_time_budget_exhausted(budget_hours: float = 8.5) -> bool:
 
 
 def get_dynamic_max_steps(
-    obs: Any, base_multiplier: float = 1.5, min_limit: int = 25, max_limit: int = 80
+    obs: Any, base_multiplier: float = 2.0, min_limit: int = 35, max_limit: int = 120
 ) -> int:
     grid = extract_grid_array(obs)
     if grid is None:
-        return 40
+        return 50
     height, width = grid.shape
     calculated_steps = int((height + width) * base_multiplier)
     return max(min_limit, min(max_limit, calculated_steps))
 
 
-def get_max_steps_for_level(env: Any, level: int, fallback_obs: Any = None) -> int:
+def get_max_steps_for_level(
+    env: Any,
+    level: int,
+    fallback_obs: Any = None,
+    baseline_multiplier: float = 3.0,
+    remaining_budget: Optional[int] = None,
+) -> int:
+    """Calculates maximum allowed steps for a level attempt.
+    
+    In ARC-AGI-3, baseline_actions is the human/optimal baseline for scoring
+    ((baseline / actions)^2 * 100), NOT a hard game termination limit.
+    This function scales the baseline by baseline_multiplier (default 3.0x)
+    so the agent has sufficient exploration budget to solve the level.
+    """
+    steps = None
     try:
         if hasattr(env, "environment_info") and env.environment_info is not None:
             baseline_actions = getattr(env.environment_info, "baseline_actions", None)
             if baseline_actions and isinstance(baseline_actions, list):
                 if 0 <= level - 1 < len(baseline_actions):
-                    baseline = baseline_actions[level - 1]
-                    return int(baseline)
+                    baseline = int(baseline_actions[level - 1])
+                    steps = max(1, int(baseline * baseline_multiplier))
     except Exception:
         pass
-    return get_dynamic_max_steps(fallback_obs)
+    if steps is None:
+        steps = get_dynamic_max_steps(fallback_obs)
+
+    if remaining_budget is not None and remaining_budget > 0:
+        steps = min(steps, remaining_budget)
+    return max(1, steps)
 
 
 class ARCRunner:
-    """Executes single levels and multi-level sequential games."""
+    """Executes single levels and multi-level sequential games with budget and retry management."""
 
     def __init__(
         self,
@@ -54,13 +77,16 @@ class ARCRunner:
         time_budget_hours: float = 8.5,
         max_iterations_per_level: int = 3,
         max_total_actions: Optional[int] = None,
+        baseline_multiplier: float = 3.0,
     ):
         self.agent = agent
         self.time_budget_hours = time_budget_hours
         self.max_iterations_per_level = max_iterations_per_level
         self.max_total_actions = max_total_actions
+        self.baseline_multiplier = baseline_multiplier
         self._total_actions_taken: int = 0
         self._current_game_budget: Optional[int] = max_total_actions
+        os.environ["ONLY_RESET_LEVELS"] = "true"
 
     @property
     def total_actions_taken(self) -> int:
@@ -175,6 +201,8 @@ class ARCRunner:
         valid_actions: List[Any],
         start_step: int,
         max_steps: int,
+        iteration: int = 1,
+        max_iterations: int = 3,
     ) -> Tuple[ARCState, Any, int]:
         """Closed-loop perception-action-reflection step execution loop."""
         current_state = curr_state
@@ -207,7 +235,8 @@ class ARCRunner:
                 or valid_actions
             )
 
-            render_live(current_state, status=f"🔄 Step {step_count + 1}/{max_steps} — Brain deciding next action...")
+            budget_str = f" | Total {self._total_actions_taken}/{self._current_game_budget}" if self._current_game_budget else f" | Total {self._total_actions_taken}"
+            render_live(current_state, status=f"🔄 Step {step_count + 1}/{max_steps} (Try {iteration}/{max_iterations}){budget_str} — Brain deciding next action...")
 
             action, action_data, debug_note = self.agent.decide_action(
                 game_id, level, s0_state, current_state, current_valid_actions, debug_note
@@ -216,7 +245,7 @@ class ARCRunner:
             step_count += 1
             self._total_actions_taken += 1
             action_name = getattr(action, "name", str(action)).upper()
-            render_live(current_state, status=f"🚀 Step {step_count}/{max_steps} — Executing: {action_name}")
+            render_live(current_state, status=f"🚀 Step {step_count}/{max_steps} (Try {iteration}/{max_iterations}){budget_str} — Executing: {action_name}")
 
             next_state, next_transition, is_repeat_state, is_repeat_transition = self.agent.execute_action(
                 game_id,
@@ -234,28 +263,20 @@ class ARCRunner:
 
             if next_transition.changed is True:
                 zero_diff_streak = 0
-                if not is_repeat_transition:
-                    render_live(next_state, status=f"👁️ Step {step_count}/{max_steps} — Running visual analysis...")
-                    visual_analysis = self.agent.eye.analyse_visual(game_id, s0_state, next_transition, diff)
-                else:
-                    visual_analysis = "[CACHED] Matches previously verified transition pattern."
+                render_live(next_state, status=f"👁️ Step {step_count}/{max_steps} (Try {iteration}/{max_iterations}) — Running visual analysis...")
+                visual_analysis = self.agent.eye.analyse_visual(game_id, s0_state, next_transition, diff)
             elif next_transition.changed is False:
                 zero_diff_streak += 1
 
-            transition_key = (current_state.state_hash, next_transition.action_sig)
-            if is_repeat_transition and transition_key in self.agent.memory.debugger_cache:
-                debug_note = self.agent.memory.debugger_cache[transition_key] + "\n[CACHED] Reused previous validation."
-            else:
-                debug_note = self.agent.debugger.validate(
-                    game_id,
-                    level,
-                    s0_state,
-                    next_transition,
-                    diff,
-                    visual_analysis,
-                    self.agent.cache,
-                )
-                self.agent.memory.debugger_cache[transition_key] = debug_note
+            debug_note = self.agent.debugger.validate(
+                game_id,
+                level,
+                s0_state,
+                next_transition,
+                diff,
+                visual_analysis,
+                self.agent.cache,
+            )
 
             if visual_analysis:
                 self.agent.world_model.update_from_text(visual_analysis)
@@ -269,9 +290,8 @@ class ARCRunner:
 
             maybe_append_rule(game_id, debug_note, is_repeat_state, next_transition.changed, self.agent.cache)
 
-            budget_str = f" | Total {self._total_actions_taken}/{self._current_game_budget}" if self._current_game_budget else f" | Total {self._total_actions_taken}"
             status_line = (
-                f"🎮 {game_id} | Lvl {level} | Step {step_count}/{max_steps}{budget_str} | "
+                f"🎮 {game_id} | Lvl {level} | Step {step_count}/{max_steps} (Try {iteration}/{max_iterations}){budget_str} | "
                 f"{'CHANGED' if next_transition.changed else 'NOOP'} | Hash: {next_state.state_hash[:8]}"
             )
             if zero_diff_streak >= self.agent.stuck_threshold:
@@ -327,7 +347,7 @@ class ARCRunner:
             if iteration > 1:
                 curr_obs = env.reset() if hasattr(env, "reset") else env.step(None)
                 self.agent.world_model.reset_level_fields()
-                self.agent.cache.append_action_log(game_id, level, f"\n### --- RETRY ITERATION {iteration} (Life {iteration}/{iterations_limit}) ---\n")
+                self.agent.cache.append_action_log(game_id, level, f"\n### --- RETRY ITERATION {iteration} (Try {iteration}/{iterations_limit}) ---\n")
 
             s0_state = self.agent.enter_level(
                 game_id, level, curr_obs, is_first_level_of_game, valid_actions
@@ -360,6 +380,8 @@ class ARCRunner:
                 valid_actions,
                 steps_used,
                 max_steps,
+                iteration=iteration,
+                max_iterations=iterations_limit,
             )
 
             if self.agent.resolver.is_win(state) or self.agent.resolver.is_level_up(state):
@@ -384,8 +406,11 @@ class ARCRunner:
         max_iterations_per_level: Optional[int] = None,
         max_total_actions: Optional[int] = None,
     ) -> Any:
-        """Executes full multi-level game progression."""
+        """Executes full multi-level game progression with total move budget allocation."""
         self._total_actions_taken = 0
+        reset_live_display()
+
+        effective_iterations = max_iterations_per_level or self.max_iterations_per_level
         if max_total_actions is not None:
             self._current_game_budget = max_total_actions
         elif self.max_total_actions is not None:
@@ -396,13 +421,15 @@ class ARCRunner:
                 if hasattr(env, "environment_info") and env.environment_info is not None:
                     baselines = getattr(env.environment_info, "baseline_actions", None)
                     if baselines and isinstance(baselines, list):
-                        tries = max_iterations_per_level or self.max_iterations_per_level
-                        self._current_game_budget = sum(baselines) * tries
+                        self._current_game_budget = sum(baselines) * effective_iterations
             except Exception:
                 pass
 
-        if self._current_game_budget is not None:
-            print(f"🎯 [GAME BUDGET] Total allowed moves for {game_id}: {self._current_game_budget}")
+        if self._current_game_budget is None:
+            # Default generous per-game move budget if baselines are hidden (e.g. competition mode)
+            self._current_game_budget = 1500
+
+        print(f"🎯 [GAME BUDGET] Total allowed moves for {game_id}: {self._current_game_budget}")
 
         if obs is None:
             obs = env.reset() if hasattr(env, "reset") else env.step(None)
@@ -427,7 +454,14 @@ class ARCRunner:
                 )
                 or getattr(env, "action_space", [])
             )
-            dynamic_max_steps = get_max_steps_for_level(env, level, fallback_obs=obs)
+            remaining_budget = (self._current_game_budget - self._total_actions_taken) if self._current_game_budget else None
+            dynamic_max_steps = get_max_steps_for_level(
+                env,
+                level,
+                fallback_obs=obs,
+                baseline_multiplier=self.baseline_multiplier,
+                remaining_budget=remaining_budget,
+            )
 
             if max_steps_per_level is not None:
                 dynamic_max_steps = min(dynamic_max_steps, max_steps_per_level)
@@ -440,7 +474,7 @@ class ARCRunner:
                 valid_actions,
                 max_steps=dynamic_max_steps,
                 is_first_level_of_game=(level == 1),
-                max_iterations=max_iterations_per_level or self.max_iterations_per_level,
+                max_iterations=effective_iterations,
             )
 
             if self.agent.resolver.is_game_over(state) or self.agent.resolver.is_win(state):

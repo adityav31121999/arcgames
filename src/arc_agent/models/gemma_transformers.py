@@ -196,8 +196,30 @@ class GemmaTransformersChatModel(BaseChatModel):
 
             output_ids = self.model.generate(**inputs, **generate_kwargs)
 
-        input_len = inputs["input_ids"].shape[-1]
-        generated_ids = output_ids[0][input_len:]
+        input_ids = inputs["input_ids"]
+        input_len = input_ids.shape[-1]
+        out = output_ids[0]
+
+        # Determine generated tokens safely (handling multimodal prefixes, image tokens, and left-padding)
+        if out.shape[-1] > input_len and (out[:input_len] == input_ids[0]).all():
+            generated_ids = out[input_len:]
+        elif out.shape[-1] <= input_len:
+            # Model output only generated tokens
+            generated_ids = out
+        else:
+            # Check prefix overlap between prompt input_ids and generated output
+            prefix_match_len = 0
+            while (
+                prefix_match_len < input_len
+                and prefix_match_len < out.shape[-1]
+                and out[prefix_match_len] == input_ids[0][prefix_match_len]
+            ):
+                prefix_match_len += 1
+            if prefix_match_len > 0:
+                generated_ids = out[prefix_match_len:]
+            else:
+                generated_ids = out[input_len:] if out.shape[-1] > input_len else out
+
         decoded_text = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
 
         # Handle stop sequences cleanup if specified
@@ -205,6 +227,33 @@ class GemmaTransformersChatModel(BaseChatModel):
             for s in stop:
                 if s in decoded_text:
                     decoded_text = decoded_text.split(s)[0].strip()
+
+        # Sanitize against degenerate phrase repetition (e.g. repeated token loops)
+        words = decoded_text.split()
+        if len(words) > 10:
+            for phrase_len in (1, 2, 3):
+                repeated_streak = 0
+                max_streak = 0
+                for i in range(phrase_len, len(words), phrase_len):
+                    if words[i : i + phrase_len] == words[i - phrase_len : i]:
+                        repeated_streak += 1
+                        max_streak = max(max_streak, repeated_streak)
+                    else:
+                        repeated_streak = 0
+                if max_streak >= 5:
+                    print(f"⚠️ [LLM SANITIZER] Detected degenerate repetition streak (x{max_streak}), truncating.")
+                    decoded_text = " ".join(words[:12])
+                    break
+
+        # Debug logging for raw model generation to diagnose tokenization / corruption issues
+        import os
+        if (
+            os.getenv("DEBUG_LLM_OUTPUT", "false").lower() in ("true", "1")
+            or os.getenv("DEBUG", "false").lower() in ("true", "1")
+            or len(decoded_text) == 0
+        ):
+            preview = repr(decoded_text[:150]) if decoded_text else "<EMPTY>"
+            print(f"🔍 [LLM RAW RESPONSE] tokens={len(generated_ids)} | text={preview}")
 
         message = AIMessage(content=decoded_text)
         return ChatResult(generations=[ChatGeneration(message=message)])

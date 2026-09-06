@@ -6,6 +6,9 @@ from pathlib import Path
 import os
 import sys
 
+# Ensure reset only resets the active level, matching duck/taaf behavior
+os.environ["ONLY_RESET_LEVELS"] = "true"
+
 # Ensure src is in sys.path
 repo_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(repo_root / "src"))

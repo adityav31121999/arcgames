@@ -54,16 +54,21 @@ class DummyEnvWithInfo:
         return DummyObservation(new_grid)
 
 
-def test_get_max_steps_for_level_exact_baseline():
-    """Verify that get_max_steps_for_level returns exact baseline, NO x3 multiplier."""
+def test_get_max_steps_for_level_multiplier():
+    """Verify that get_max_steps_for_level scales by baseline_multiplier (default 3.0x, or custom)."""
     env = DummyEnvWithInfo(np.zeros((10, 10)), baseline_actions=[12, 25, 40])
     
-    # Level 1: exactly 12 (not 36)
-    assert get_max_steps_for_level(env, 1) == 12
-    # Level 2: exactly 25 (not 75)
-    assert get_max_steps_for_level(env, 2) == 25
-    # Level 3: exactly 40 (not 120)
-    assert get_max_steps_for_level(env, 3) == 40
+    # Default multiplier (3.0x) so agent is not starved of exploration steps
+    assert get_max_steps_for_level(env, 1) == 36
+    assert get_max_steps_for_level(env, 2) == 75
+    assert get_max_steps_for_level(env, 3) == 120
+
+    # Explicit 1.0x multiplier
+    assert get_max_steps_for_level(env, 1, baseline_multiplier=1.0) == 12
+    assert get_max_steps_for_level(env, 2, baseline_multiplier=1.0) == 25
+
+    # With remaining_budget cap
+    assert get_max_steps_for_level(env, 1, remaining_budget=20) == 20
 
     # Level out of bounds falls back to dynamic
     obs = DummyObservation(np.zeros((10, 10)))

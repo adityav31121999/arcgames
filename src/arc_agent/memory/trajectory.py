@@ -25,7 +25,6 @@ class TrajectoryMemory:
         self.transition_model: Dict[Tuple[str, ActionSignature], Tuple[str, Optional[bool]]] = {}
         self.sprite_box: Optional[Tuple[int, int, int, int]] = None
         self.state_history: List[str] = []
-        self.debugger_cache: Dict[Tuple[str, ActionSignature], str] = {}
 
     def reset(self, s0_hash: str) -> None:
         """Resets trajectory for a new level or retry iteration."""
@@ -35,7 +34,6 @@ class TrajectoryMemory:
         self.transition_model = {}
         self.sprite_box = None
         self.state_history = [s0_hash]
-        self.debugger_cache = {}
 
     def update_sprite_region(
         self, grid1: Optional[np.ndarray], grid2: Optional[np.ndarray]
