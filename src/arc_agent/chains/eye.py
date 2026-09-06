@@ -13,12 +13,17 @@ from .prompts import PROMPT_ANALYSE_VISUAL, PROMPT_ASSUME, PROMPT_COMP_ASSUME, S
 class EyeChain:
     """Multimodal vision perception chain processing visual grid layouts and pixel changes."""
 
-    def __init__(self, model: BaseChatModel, max_tokens: int = 1024):
+    def __init__(self, model: BaseChatModel, max_tokens: int = 1024, system_prompt: str = SYSTEM_PROMPT):
         self.model = model
         self.max_tokens = max_tokens
+        self.system_prompt = system_prompt
+
+    def set_system_prompt(self, system_prompt: str) -> None:
+        """Updates the system prompt for dynamic action spaces."""
+        self.system_prompt = system_prompt
 
     def _invoke(self, prompt: str, image_obj: Optional[Any] = None) -> str:
-        messages = [SystemMessage(content=SYSTEM_PROMPT)]
+        messages = [SystemMessage(content=self.system_prompt)]
         if image_obj is not None:
             messages.append(
                 HumanMessage(

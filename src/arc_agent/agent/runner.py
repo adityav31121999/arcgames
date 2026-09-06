@@ -236,10 +236,23 @@ class ARCRunner:
             )
 
             budget_str = f" | Total {self._total_actions_taken}/{self._current_game_budget}" if self._current_game_budget else f" | Total {self._total_actions_taken}"
+            if self._current_game_budget:
+                remaining_moves = max(0, self._current_game_budget - self._total_actions_taken)
+                budget_context = (
+                    f"You have used {self._total_actions_taken} of {self._current_game_budget} total allowed moves across the game "
+                    f"({remaining_moves} moves remaining). "
+                    f"Current Level {level} attempt: Step {step_count + 1}/{max_steps} (Try {iteration}/{max_iterations})."
+                )
+            else:
+                budget_context = (
+                    f"You have used {self._total_actions_taken} moves so far. "
+                    f"Current Level {level} attempt: Step {step_count + 1}/{max_steps} (Try {iteration}/{max_iterations})."
+                )
+
             render_live(current_state, status=f"🔄 Step {step_count + 1}/{max_steps} (Try {iteration}/{max_iterations}){budget_str} — Brain deciding next action...")
 
             action, action_data, debug_note = self.agent.decide_action(
-                game_id, level, s0_state, current_state, current_valid_actions, debug_note
+                game_id, level, s0_state, current_state, current_valid_actions, debug_note, budget_context=budget_context
             )
 
             step_count += 1
@@ -276,6 +289,7 @@ class ARCRunner:
                 diff,
                 visual_analysis,
                 self.agent.cache,
+                budget_context=budget_context,
             )
 
             if visual_analysis:
@@ -430,6 +444,12 @@ class ARCRunner:
             self._current_game_budget = 1500
 
         print(f"🎯 [GAME BUDGET] Total allowed moves for {game_id}: {self._current_game_budget}")
+
+        # Configure dynamic action space on agent if available from environment
+        act_space = getattr(env, "action_space", None)
+        if act_space and hasattr(self.agent, "set_action_space"):
+            self.agent.set_action_space(act_space)
+            print(f"🕹️ Configured dynamic action prompt for: {[getattr(a, 'name', str(a)) for a in act_space]}")
 
         if obs is None:
             obs = env.reset() if hasattr(env, "reset") else env.step(None)

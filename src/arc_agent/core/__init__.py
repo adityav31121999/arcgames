@@ -5,6 +5,12 @@ from .diff import get_gameplay_grid, detect_real_change, get_grid_difference_tex
 from .state import ARCState, ARCTransition, compute_state_hash, compute_transition
 from .actions import ActionSignature, ARCActionMapper, is_complex_action, validate_coordinates
 from .resolver import GameStateResolver
+from .object_detection import (
+    detect_grid_objects,
+    is_click_only,
+    render_click_history,
+    render_detected_objects,
+)
 
 __all__ = [
     "ARC_COLOR_PALETTE",
@@ -25,4 +31,8 @@ __all__ = [
     "is_complex_action",
     "validate_coordinates",
     "GameStateResolver",
+    "detect_grid_objects",
+    "render_detected_objects",
+    "render_click_history",
+    "is_click_only",
 ]

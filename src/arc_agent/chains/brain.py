@@ -5,20 +5,26 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..core.state import ARCState
+from ..core.object_detection import is_click_only
 from ..memory.knowledge import KnowledgeCache
-from .prompts import PROMPT_ACTION, SYSTEM_PROMPT
+from .prompts import PROMPT_ACTION, PROMPT_CLICK_ONLY_TARGET, SYSTEM_PROMPT
 
 
 class BrainChain:
     """Core reasoning and action-selection engine."""
 
-    def __init__(self, model: BaseChatModel, max_tokens: int = 256):
+    def __init__(self, model: BaseChatModel, max_tokens: int = 256, system_prompt: str = SYSTEM_PROMPT):
         self.model = model
         self.max_tokens = max_tokens
+        self.system_prompt = system_prompt
+
+    def set_system_prompt(self, system_prompt: str) -> None:
+        """Updates the system prompt for dynamic action spaces."""
+        self.system_prompt = system_prompt
 
     def _invoke(self, prompt: str, temperature: float = 0.0, max_tokens: int = 32, stop: Optional[List[str]] = None) -> str:
         messages = [
-            SystemMessage(content=SYSTEM_PROMPT),
+            SystemMessage(content=self.system_prompt),
             HumanMessage(content=prompt),
         ]
         try:
@@ -43,6 +49,9 @@ class BrainChain:
         context_note: str,
         cache: KnowledgeCache,
         world_model_block: str = "",
+        budget_context: str = "",
+        object_list: str = "",
+        click_history: str = "",
     ) -> str:
         """Determines next discrete or complex coordinate action."""
         actions_log = cache.actions_log(game_id, level)
@@ -58,9 +67,18 @@ class BrainChain:
 
         action_names = [getattr(a, "name", str(a)) for a in valid_actions]
         world_model_section = f"\n{world_model_block}\n" if world_model_block else ""
+        budget_section = f"Move Budget Status: {budget_context}\n" if budget_context else ""
 
-        prompt = f"""{PROMPT_ACTION}
-{world_model_section}
+        if is_click_only(valid_actions):
+            base_prompt = PROMPT_CLICK_ONLY_TARGET.format(
+                object_list=object_list or "No distinct foreground objects detected.",
+                click_history=click_history or "No coordinates clicked yet in this attempt.",
+            )
+        else:
+            base_prompt = PROMPT_ACTION
+
+        prompt = f"""{base_prompt}
+{world_model_section}{budget_section}
 {grid_repr_context}
 
 JSON State Metadata:

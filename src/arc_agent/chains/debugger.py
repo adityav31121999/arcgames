@@ -12,12 +12,17 @@ from .prompts import PROMPT_STATE_DEBUG, SYSTEM_PROMPT
 class DebuggerChain:
     """Validates whether state transitions matched expectations or collided with obstacles."""
 
-    def __init__(self, model: BaseChatModel, max_tokens: int = 512):
+    def __init__(self, model: BaseChatModel, max_tokens: int = 512, system_prompt: str = SYSTEM_PROMPT):
         self.model = model
         self.max_tokens = max_tokens
+        self.system_prompt = system_prompt
+
+    def set_system_prompt(self, system_prompt: str) -> None:
+        """Updates the system prompt for dynamic action spaces."""
+        self.system_prompt = system_prompt
 
     def _invoke(self, prompt: str, image_obj: Optional[Any] = None) -> str:
-        messages = [SystemMessage(content=SYSTEM_PROMPT)]
+        messages = [SystemMessage(content=self.system_prompt)]
         if image_obj is not None:
             messages.append(
                 HumanMessage(
@@ -45,13 +50,15 @@ class DebuggerChain:
         diff_text: str,
         visual_analysis: str = "",
         cache: Optional[KnowledgeCache] = None,
+        budget_context: str = "",
     ) -> str:
         """Evaluates whether the last move was expected, blocked, or altered the target."""
         actions_log = cache.actions_log(game_id, level) if cache else ""
         scratch = cache.scratch(game_id) if cache else ""
         action_line = str(transition.action_sig.name) if transition.action_sig else "Initial step"
+        budget_line = f"\nMove Budget Status: {budget_context}" if budget_context else ""
 
-        prompt = f"""{PROMPT_STATE_DEBUG}
+        prompt = f"""{PROMPT_STATE_DEBUG}{budget_line}
 
 Action causing transition: {action_line}
 Ground-truth pixel changes: {diff_text}

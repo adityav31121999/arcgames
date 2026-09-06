@@ -1,6 +1,19 @@
 """Centralized system prompts and templates for ARC-AGI-3 Agent."""
 
-SYSTEM_PROMPT = (
+from typing import Any, Iterable, Optional
+
+ACTION_DESCRIPTIONS = {
+    "RESET": "Initialize or restarts the game/level state.",
+    "ACTION1": "Simple action - varies by game (semantically mapped to up).",
+    "ACTION2": "Simple action - varies by game (semantically mapped to down).",
+    "ACTION3": "Simple action - varies by game (semantically mapped to left).",
+    "ACTION4": "Simple action - varies by game (semantically mapped to right).",
+    "ACTION5": "Simple action - varies by game (e.g., interact, select, rotate, attach/detach, execute, etc.).",
+    "ACTION6": "Complex action requiring x,y coordinates (0-63 range).",
+    "ACTION7": "Simple action - Undo (e.g., interact, select).",
+}
+
+SYSTEM_PROMPT_TEMPLATE = (
     "You are solving grid-puzzles with agentic AI. "
     "There are multiple different levels in this game, and the objective remains consistent. "
     "You have to find the objective and discover the possible mechanics.\n"
@@ -11,15 +24,8 @@ SYSTEM_PROMPT = (
     "- The game is composed of grid-like puzzle and objects of various size and shapes.\n"
     "- These are to provide multiple features like movement, change, blocking the movement, allowing increase in steps, etc.\n"
     "- There can be multiple colors in which the player can move, denoting walkable corridors, interactive tiles, or target areas.\n"
-    "- There are actions allowed for the level, use only those. These are:\n"
-    "    - RESET: Initialize or restarts the game/level state.\n"
-    "    - ACTION1: Simple action - varies by game (semantically mapped to up).\n"
-    "    - ACTION2: Simple action - varies by game (semantically mapped to down).\n"
-    "    - ACTION3: Simple action - varies by game (semantically mapped to left).\n"
-    "    - ACTION4: Simple action - varies by game (semantically mapped to right).\n"
-    "    - ACTION5: Simple action - varies by game (e.g., interact, select, rotate, attach/detach, execute, etc.).\n"
-    "    - ACTION6: Complex action requiring x,y coordinates (0-63 range).\n"
-    "    - ACTION7: Simple action - Undo (e.g., interact, select).\n"
+    "- There are actions allowed for this game, use ONLY those:\n"
+    "{actions_block}\n"
     "- If there are objects within walkable regions, with different colors, try to walk over them to see if they act as active operators.\n"
     "- Discover and step onto interactive modifier or operator tiles (like specific colored tiles, "
     "'+' or weirdly shaped objects, or colored shapes with shells, etc.) "
@@ -39,6 +45,30 @@ SYSTEM_PROMPT = (
     "- Optional labeled prefixes to help maintain working memory: "
     "'World model:', 'Goal model:', 'Action model:', 'Recent findings:', 'Plan:'\n"
 )
+
+
+def build_system_prompt(action_space: Optional[Iterable[Any]] = None) -> str:
+    """Builds a dynamic system prompt templated with only the actions available in this game.
+
+    Args:
+        action_space: List/iterable of GameAction enums or string names actually available.
+    """
+    if not action_space:
+        # Default fallback to all standard actions
+        lines = [f"    - {name}: {desc}" for name, desc in ACTION_DESCRIPTIONS.items()]
+    else:
+        lines = []
+        for a in action_space:
+            name = getattr(a, "name", str(a))
+            if name in ACTION_DESCRIPTIONS:
+                lines.append(f"    - {name}: {ACTION_DESCRIPTIONS[name]}")
+            else:
+                lines.append(f"    - {name}: Action supported by environment.")
+    actions_block = "\n".join(lines)
+    return SYSTEM_PROMPT_TEMPLATE.format(actions_block=actions_block)
+
+
+SYSTEM_PROMPT = build_system_prompt()
 
 PROMPT_ASSUME = (
     "Consider the given visual of starting point of game, only make "
@@ -72,7 +102,8 @@ PROMPT_STATE_DEBUG = (
     "pixel coordinate changes, and recommend the next action. If a movement action "
     "was blocked, suggest moving in another direction. If stepping on a tile "
     "modified the target block, recommend repeating or adjusting interactions with "
-    "that tile to match the template."
+    "that tile to match the template. Pace your recommendations according to the "
+    "remaining move budget."
 )
 
 PROMPT_ACTION = (
@@ -80,7 +111,29 @@ PROMPT_ACTION = (
     "assumptions, mechanics and all actions performed, and provide the "
     "next action. Always keep moving, no matter if level is finished or not. "
     "Actively prioritize moving the player toward modifier/operator tiles to "
-    "transform the target block to match the goal template."
+    "transform the target block to match the goal template. "
+    "Pace your exploration according to the remaining move budget — do not meander if budget is limited."
+)
+
+PROMPT_CLICK_ONLY_TARGET = (
+    "This game's ONLY available action is ACTION6 (click at x,y). There are no "
+    "directional moves, so every click must be aimed at a specific object — never "
+    "a blind guess on background.\n"
+    "Before choosing coordinates:\n"
+    "1) Scan the grid for distinct, self-contained shapes — especially bracket-like "
+    "forms ('[', ']', 'C', 'U', or paired open/closed segments), arrows, or "
+    "geometric clusters that stand apart from flat background color.\n"
+    "2) Ignore fixed-position markers in the corners or edges (small repeating "
+    "diamond/square glyphs) — these are try/step trackers, not interactive objects. "
+    "If the same shape appears unchanged across steps in a corner, it is HUD, not a target.\n"
+    "3) Prefer clicking objects you have NOT yet clicked, using the tried-coordinates "
+    "log below. Only re-click an object if you have a specific hypothesis to test "
+    "(e.g. 'clicking it a second time may toggle it back').\n"
+    "4) Aim for the visual center of the object's bounding box, not its edge — "
+    "brackets and paired shapes especially can fail to register if you click the "
+    "gap between their two halves rather than a solid pixel.\n"
+    "Objects detected this frame:\n{object_list}\n"
+    "Coordinates already tried and their results:\n{click_history}\n"
 )
 
 PROMPT_ITERATION_REVIEW = (

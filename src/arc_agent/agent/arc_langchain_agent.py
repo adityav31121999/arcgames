@@ -2,12 +2,20 @@
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+import numpy as np
 
 from ..chains.brain import BrainChain
 from ..chains.debugger import DebuggerChain
 from ..chains.eye import EyeChain
 from ..chains.reviewer import ReviewerChain
+from ..chains.prompts import build_system_prompt
 from ..core.actions import ARCActionMapper, ActionSignature, is_complex_action
+from ..core.object_detection import (
+    detect_grid_objects,
+    is_click_only,
+    render_click_history,
+    render_detected_objects,
+)
 from ..core.resolver import GameStateResolver
 from ..core.state import ARCState, ARCTransition, compute_transition, save_step_state_json
 from ..memory.knowledge import (
@@ -48,6 +56,22 @@ class ARCLangChainAgent:
         self.cache = KnowledgeCache(memory_root=memory_root)
         self.world_model = WorldModel()
 
+    def set_action_space(self, action_space: Optional[Any]) -> None:
+        """Dynamically builds and sets system prompts across all chains matching the actual action space."""
+        sys_prompt = build_system_prompt(action_space)
+        self.set_system_prompt(sys_prompt)
+
+    def set_system_prompt(self, system_prompt: str) -> None:
+        """Sets the system prompt across all LangChain chains."""
+        if hasattr(self.eye, "set_system_prompt"):
+            self.eye.set_system_prompt(system_prompt)
+        if hasattr(self.debugger, "set_system_prompt"):
+            self.debugger.set_system_prompt(system_prompt)
+        if hasattr(self.brain, "set_system_prompt"):
+            self.brain.set_system_prompt(system_prompt)
+        if hasattr(self.reviewer, "set_system_prompt"):
+            self.reviewer.set_system_prompt(system_prompt)
+
     def enter_level(
         self,
         game_id: str,
@@ -57,6 +81,8 @@ class ARCLangChainAgent:
         valid_actions: Optional[List[Any]] = None,
     ) -> ARCState:
         """Initializes state, memory, and performs initial visual analysis of S0."""
+        if valid_actions:
+            self.set_action_space(valid_actions)
         init_knowledge_files(game_id, level, valid_actions, memory_root=self.memory_root)
         self.cache.refresh_level(game_id, level)
 
@@ -123,6 +149,7 @@ class ARCLangChainAgent:
         current_state: ARCState,
         valid_actions: List[Any],
         debug_note: str,
+        budget_context: str = "",
     ) -> Tuple[Any, Dict[str, Any], str]:
         """Decides next action using Brain chain with formatting retries and heuristics fallbacks."""
         grid_shape = current_state.grid.shape if current_state.grid is not None else None
@@ -143,6 +170,13 @@ class ARCLangChainAgent:
 
         world_model_block = self.world_model.to_prompt_block()
 
+        object_list = ""
+        click_history = ""
+        if is_click_only(allowed_actions):
+            object_list = render_detected_objects(current_state.grid)
+            actions_log = self.cache.actions_log(game_id, level)
+            click_history = render_click_history(self.memory.trajectory, actions_log_text=actions_log)
+
         raw = self.brain.decide_action(
             game_id,
             level,
@@ -152,6 +186,9 @@ class ARCLangChainAgent:
             context_note,
             self.cache,
             world_model_block=world_model_block,
+            budget_context=budget_context,
+            object_list=object_list,
+            click_history=click_history,
         )
         if raw:
             self.world_model.update_from_text(raw)
@@ -175,6 +212,9 @@ class ARCLangChainAgent:
             retry_note,
             self.cache,
             world_model_block=world_model_block,
+            budget_context=budget_context,
+            object_list=object_list,
+            click_history=click_history,
         )
         if raw_retry:
             self.world_model.update_from_text(raw_retry)
@@ -182,7 +222,7 @@ class ARCLangChainAgent:
         if action is not None:
             return action, action_data, context_note
 
-        return self._safe_fallback(allowed_actions, state_hash, grid_shape, context_note)
+        return self._safe_fallback(allowed_actions, state_hash, grid_shape, context_note, current_grid=current_state.grid)
 
     def _safe_fallback(
         self,
@@ -190,8 +230,22 @@ class ARCLangChainAgent:
         state_hash: str,
         grid_shape: Optional[Tuple[int, int]],
         context_note: str,
+        current_grid: Optional[np.ndarray] = None,
     ) -> Tuple[Any, Dict[str, Any], str]:
         """Provides deterministic fallback when LLM output cannot be parsed."""
+        # 1. If click-only game, target detected unclicked objects before blind coordinate search
+        if is_click_only(allowed_actions) and current_grid is not None:
+            detected = detect_grid_objects(current_grid)
+            candidates = [o for o in detected if not o["is_hud"]] or detected
+            tried_coords = set(self.memory.tried_coords_for_action(state_hash, "ACTION6"))
+            for obj in candidates:
+                cx, cy = obj["solid_click_point"]
+                if (cx, cy) not in tried_coords:
+                    return (
+                        allowed_actions[0],
+                        {"x": int(cx), "y": int(cy)},
+                        context_note + f"\n[PARSER NOTICE] Fallback: targeted untried object #{obj['id']} at ({cx}, {cy}).",
+                    )
         tried = self.memory.tried_signatures(state_hash)
 
         # 1. Try untried simple action

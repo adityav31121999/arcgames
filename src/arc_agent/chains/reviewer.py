@@ -11,9 +11,14 @@ from .prompts import PROMPT_ITERATION_REVIEW, SYSTEM_PROMPT
 class ReviewerChain:
     """Reflects on failed attempts to consolidate verified mechanics and navigation rules."""
 
-    def __init__(self, model: BaseChatModel, max_tokens: int = 768):
+    def __init__(self, model: BaseChatModel, max_tokens: int = 1024, system_prompt: str = SYSTEM_PROMPT):
         self.model = model
         self.max_tokens = max_tokens
+        self.system_prompt = system_prompt
+
+    def set_system_prompt(self, system_prompt: str) -> None:
+        """Updates the system prompt for dynamic action spaces."""
+        self.system_prompt = system_prompt
 
     def review(
         self,
@@ -40,7 +45,7 @@ Current Knowledge Store (scratchpad, untruncated):
 {full_scratch}"""
 
         messages = [
-            SystemMessage(content=SYSTEM_PROMPT),
+            SystemMessage(content=self.system_prompt),
             HumanMessage(content=prompt),
         ]
 
