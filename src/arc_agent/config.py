@@ -42,6 +42,10 @@ class AgentConfig(BaseModel):
     time_budget_hours: float = Field(default=8.5)
     memory_root: str = Field(default="./agent_memory")
     vision_cache_dir: str = Field(default="/tmp/agent_vision")
+    max_total_actions_per_game: Optional[int] = Field(
+        default=None,
+        description="Hard cap on total game moves; None = derived as sum(baseline_actions) × max_iterations_per_level",
+    )
 
 
 class EnvironmentConfig(BaseModel):

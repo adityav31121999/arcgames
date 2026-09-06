@@ -22,6 +22,7 @@ agent:
   time_budget_hours: 8.2
   memory_root: "/kaggle/working/agent_memory"
   vision_cache_dir: "/tmp/agent_vision"
+  max_total_actions_per_game: null
 
 environment:
   mode: "auto" # Checks KAGGLE_IS_COMPETITION_RERUN

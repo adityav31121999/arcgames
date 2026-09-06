@@ -39,7 +39,7 @@ def get_max_steps_for_level(env: Any, level: int, fallback_obs: Any = None) -> i
             if baseline_actions and isinstance(baseline_actions, list):
                 if 0 <= level - 1 < len(baseline_actions):
                     baseline = baseline_actions[level - 1]
-                    return int(baseline * 3)
+                    return int(baseline)
     except Exception:
         pass
     return get_dynamic_max_steps(fallback_obs)
@@ -53,10 +53,24 @@ class ARCRunner:
         agent: ARCLangChainAgent,
         time_budget_hours: float = 8.5,
         max_iterations_per_level: int = 3,
+        max_total_actions: Optional[int] = None,
     ):
         self.agent = agent
         self.time_budget_hours = time_budget_hours
         self.max_iterations_per_level = max_iterations_per_level
+        self.max_total_actions = max_total_actions
+        self._total_actions_taken: int = 0
+        self._current_game_budget: Optional[int] = max_total_actions
+
+    @property
+    def total_actions_taken(self) -> int:
+        return self._total_actions_taken
+
+    def should_stop_game(self) -> bool:
+        """Returns True if total action budget for the game is exhausted."""
+        if self._current_game_budget is not None and self._total_actions_taken >= self._current_game_budget:
+            return True
+        return False
 
     def attempt_one_shot(
         self,
@@ -90,6 +104,10 @@ class ARCRunner:
                 print("⚠️ [TIMEOUT MONITOR] Time budget exhausted during speculative one-shot execution.")
                 break
 
+            if self.should_stop_game():
+                print(f"⛔ [BUDGET] Total action budget exhausted ({self._total_actions_taken}/{self._current_game_budget}) during one-shot.")
+                break
+
             if steps_used >= max_steps:
                 break
 
@@ -97,6 +115,7 @@ class ARCRunner:
                 break
 
             steps_used += 1
+            self._total_actions_taken += 1
             action_name = getattr(action, "name", str(action)).upper()
             status_text = f"⚡ [Speculative Step {steps_used}] Executing: {action_name}"
             render_live(prior_state, status=status_text, label="One-Shot Plan Speculation")
@@ -170,6 +189,10 @@ class ARCRunner:
                 print(f"⚠️ [TIMEOUT MONITOR] Exceeded budget during Step {step_count}. Returning.")
                 return current_state, current_state.game_state, step_count
 
+            if self.should_stop_game():
+                print(f"⛔ [BUDGET] Total action budget exhausted ({self._total_actions_taken}/{self._current_game_budget}) at Step {step_count}.")
+                return current_state, current_state.game_state, step_count
+
             # Dynamically refresh permitted actions from current frame metadata or env.action_space
             raw_obs = current_state.raw_obs
             current_valid_actions = (
@@ -191,6 +214,7 @@ class ARCRunner:
             )
 
             step_count += 1
+            self._total_actions_taken += 1
             action_name = getattr(action, "name", str(action)).upper()
             render_live(current_state, status=f"🚀 Step {step_count}/{max_steps} — Executing: {action_name}")
 
@@ -245,8 +269,9 @@ class ARCRunner:
 
             maybe_append_rule(game_id, debug_note, is_repeat_state, next_transition.changed, self.agent.cache)
 
+            budget_str = f" | Total {self._total_actions_taken}/{self._current_game_budget}" if self._current_game_budget else f" | Total {self._total_actions_taken}"
             status_line = (
-                f"🎮 {game_id} | Lvl {level} | Step {step_count}/{max_steps} | "
+                f"🎮 {game_id} | Lvl {level} | Step {step_count}/{max_steps}{budget_str} | "
                 f"{'CHANGED' if next_transition.changed else 'NOOP'} | Hash: {next_state.state_hash[:8]}"
             )
             if zero_diff_streak >= self.agent.stuck_threshold:
@@ -295,6 +320,10 @@ class ARCRunner:
                 print(f"⚠️ [TIMEOUT MONITOR] Skipping remaining retries for Level {level}.")
                 break
 
+            if self.should_stop_game():
+                print(f"⛔ [BUDGET] Stopping Level {level} retries: action budget ({self._total_actions_taken}/{self._current_game_budget}) reached.")
+                break
+
             if iteration > 1:
                 curr_obs = env.reset() if hasattr(env, "reset") else env.step(None)
                 self.agent.world_model.reset_level_fields()
@@ -309,6 +338,11 @@ class ARCRunner:
             )
             if solved:
                 return curr_state.raw_obs, state, steps_used
+
+            if self.should_stop_game():
+                print(f"⛔ [BUDGET] Stopping Level {level} after one-shot: action budget ({self._total_actions_taken}/{self._current_game_budget}) reached.")
+                final_state = curr_state
+                break
 
             if self.agent.resolver.is_game_over(state):
                 if iteration < iterations_limit:
@@ -331,6 +365,10 @@ class ARCRunner:
             if self.agent.resolver.is_win(state) or self.agent.resolver.is_level_up(state):
                 return final_state.raw_obs, state, total_steps
 
+            if self.should_stop_game():
+                print(f"⛔ [BUDGET] Stopping Level {level}: action budget reached after iteration {iteration}.")
+                break
+
             if iteration < iterations_limit:
                 self.agent.review_failed_iteration(game_id, level, iteration, s0_state, final_state)
 
@@ -344,8 +382,28 @@ class ARCRunner:
         max_levels: int = 10,
         max_steps_per_level: Optional[int] = None,
         max_iterations_per_level: Optional[int] = None,
+        max_total_actions: Optional[int] = None,
     ) -> Any:
         """Executes full multi-level game progression."""
+        self._total_actions_taken = 0
+        if max_total_actions is not None:
+            self._current_game_budget = max_total_actions
+        elif self.max_total_actions is not None:
+            self._current_game_budget = self.max_total_actions
+        else:
+            self._current_game_budget = None
+            try:
+                if hasattr(env, "environment_info") and env.environment_info is not None:
+                    baselines = getattr(env.environment_info, "baseline_actions", None)
+                    if baselines and isinstance(baselines, list):
+                        tries = max_iterations_per_level or self.max_iterations_per_level
+                        self._current_game_budget = sum(baselines) * tries
+            except Exception:
+                pass
+
+        if self._current_game_budget is not None:
+            print(f"🎯 [GAME BUDGET] Total allowed moves for {game_id}: {self._current_game_budget}")
+
         if obs is None:
             obs = env.reset() if hasattr(env, "reset") else env.step(None)
 
@@ -353,6 +411,10 @@ class ARCRunner:
         while level <= max_levels:
             if is_time_budget_exhausted(self.time_budget_hours):
                 print(f"⚠️ [TIMEOUT MONITOR] Aborting Game {game_id} at Level {level} to preserve time budget.")
+                break
+
+            if self.should_stop_game():
+                print(f"⛔ [BUDGET] Aborting Game {game_id} before Level {level}: action budget exhausted ({self._total_actions_taken}/{self._current_game_budget}).")
                 break
 
             valid_actions = (
@@ -382,6 +444,9 @@ class ARCRunner:
             )
 
             if self.agent.resolver.is_game_over(state) or self.agent.resolver.is_win(state):
+                break
+            if self.should_stop_game():
+                print(f"⛔ [BUDGET] Stopping Game {game_id} after Level {level}: action budget exhausted ({self._total_actions_taken}/{self._current_game_budget}).")
                 break
             if self.agent.resolver.is_level_up(state):
                 level += 1
