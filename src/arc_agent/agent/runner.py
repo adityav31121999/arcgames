@@ -78,12 +78,14 @@ class ARCRunner:
         max_iterations_per_level: int = 3,
         max_total_actions: Optional[int] = None,
         baseline_multiplier: float = 3.0,
+        fast_step_eval: bool = False,
     ):
         self.agent = agent
         self.time_budget_hours = time_budget_hours
         self.max_iterations_per_level = max_iterations_per_level
         self.max_total_actions = max_total_actions
         self.baseline_multiplier = baseline_multiplier
+        self.fast_step_eval = fast_step_eval
         self._total_actions_taken: int = 0
         self._current_game_budget: Optional[int] = max_total_actions
         os.environ["ONLY_RESET_LEVELS"] = "true"
@@ -273,24 +275,43 @@ class ARCRunner:
 
             diff = get_grid_difference_text(current_state.grid, next_state.grid)
             visual_analysis = ""
+            debug_note = ""
 
-            if next_transition.changed is True:
-                zero_diff_streak = 0
-                render_live(next_state, status=f"👁️ Step {step_count}/{max_steps} (Try {iteration}/{max_iterations}) — Running visual analysis...")
-                visual_analysis = self.agent.eye.analyse_visual(game_id, s0_state, next_transition, diff)
-            elif next_transition.changed is False:
+            fast_mode = self.fast_step_eval or os.getenv("FAST_STEP_EVAL", "false").lower() == "true"
+
+            if next_transition.changed is False:
                 zero_diff_streak += 1
-
-            debug_note = self.agent.debugger.validate(
-                game_id,
-                level,
-                s0_state,
-                next_transition,
-                diff,
-                visual_analysis,
-                self.agent.cache,
-                budget_context=budget_context,
-            )
+                if fast_mode:
+                    debug_note = f"[NO-OP] {action_name} had no visible effect on the grid."
+                else:
+                    debug_note = self.agent.debugger.validate(
+                        game_id,
+                        level,
+                        s0_state,
+                        next_transition,
+                        diff,
+                        visual_analysis,
+                        self.agent.cache,
+                        budget_context=budget_context,
+                    )
+            else:
+                zero_diff_streak = 0
+                if fast_mode and not is_repeat_state and zero_diff_streak < self.agent.stuck_threshold:
+                    visual_analysis = f"Changed grid: {diff}"
+                    debug_note = f"[PROGRESS] {action_name} altered board: {diff}"
+                else:
+                    render_live(next_state, status=f"👁️ Step {step_count}/{max_steps} (Try {iteration}/{max_iterations}) — Running visual analysis...")
+                    visual_analysis = self.agent.eye.analyse_visual(game_id, s0_state, next_transition, diff)
+                    debug_note = self.agent.debugger.validate(
+                        game_id,
+                        level,
+                        s0_state,
+                        next_transition,
+                        diff,
+                        visual_analysis,
+                        self.agent.cache,
+                        budget_context=budget_context,
+                    )
 
             if visual_analysis:
                 self.agent.world_model.update_from_text(visual_analysis)

@@ -164,11 +164,16 @@ class GemmaTransformersChatModel(BaseChatModel):
             if stop_token_ids:
                 class CustomStopCriteria(StoppingCriteria):
                     def __init__(self, stop_sequences):
-                        self.stop_sequences = stop_sequences
+                        self.stop_sequences = [torch.tensor(s, dtype=torch.long) for s in stop_sequences]
+                        self._device_sequences = None
 
                     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **c_kwargs) -> bool:
-                        for seq in self.stop_sequences:
-                            if len(input_ids[0]) >= len(seq) and input_ids[0][-len(seq):].tolist() == seq:
+                        if self._device_sequences is None:
+                            self._device_sequences = [s.to(input_ids.device) for s in self.stop_sequences]
+                        cur_len = input_ids.shape[-1]
+                        for seq in self._device_sequences:
+                            s_len = seq.shape[0]
+                            if cur_len >= s_len and torch.equal(input_ids[0, -s_len:], seq):
                                 return True
                         return False
 
@@ -184,7 +189,18 @@ class GemmaTransformersChatModel(BaseChatModel):
             }
             if repetition_penalty and repetition_penalty > 1.0:
                 generate_kwargs["repetition_penalty"] = repetition_penalty
-            if stopping_criteria_list is not None:
+
+            # Try native stop_strings first to delegate stop detection to C++/CUDA
+            use_fallback_stopping = True
+            if stop and tokenizer is not None:
+                try:
+                    generate_kwargs["stop_strings"] = stop
+                    generate_kwargs["tokenizer"] = tokenizer
+                    use_fallback_stopping = False
+                except Exception:
+                    pass
+
+            if use_fallback_stopping and stopping_criteria_list is not None:
                 generate_kwargs["stopping_criteria"] = stopping_criteria_list
 
             if do_sample:
@@ -194,7 +210,18 @@ class GemmaTransformersChatModel(BaseChatModel):
             else:
                 generate_kwargs["do_sample"] = False
 
-            output_ids = self.model.generate(**inputs, **generate_kwargs)
+            # Attempt accelerated generation with speculative prompt lookup
+            output_ids = None
+            if not pil_images:
+                try:
+                    fast_kwargs = dict(generate_kwargs)
+                    fast_kwargs["prompt_lookup_num_tokens"] = 3
+                    output_ids = self.model.generate(**inputs, **fast_kwargs)
+                except Exception:
+                    output_ids = None
+
+            if output_ids is None:
+                output_ids = self.model.generate(**inputs, **generate_kwargs)
 
         input_ids = inputs["input_ids"]
         input_len = input_ids.shape[-1]

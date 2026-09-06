@@ -141,3 +141,20 @@ def test_runner_tries_exhaustion(tmp_path):
     # 3 tries * 2 steps = 6 actions total
     assert runner.total_actions_taken == 6
 
+
+def test_runner_fast_step_eval(tmp_path):
+    """Test that fast_step_eval bypasses redundant LLM calls on NO-OP and routine steps."""
+    agent = _build_test_agent(tmp_path)
+    runner = ARCRunner(agent, max_iterations_per_level=1, fast_step_eval=True)
+    grid = np.zeros((5, 5), dtype=np.int32)
+    env = DummyEnvWithInfo(grid, baseline_actions=[4])
+
+    obs = runner.play_game(
+        game_id="fast_eval_test",
+        env=env,
+        max_levels=1,
+        max_steps_per_level=2,
+    )
+    assert runner.total_actions_taken == 2
+    assert runner.fast_step_eval is True
+
