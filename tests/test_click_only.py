@@ -253,3 +253,50 @@ def test_render_click_history_schema_robustness():
     assert "Clicked (X=42, Y=18)" in res2
     assert "Clicked (X=11, Y=9)" in res2
 
+
+def test_system_prompt_gemma4_moe_cap():
+    """Verify that long system prompts are kept <400 chars in role:system and prepended to user turn."""
+    from langchain_core.messages import HumanMessage, SystemMessage
+    from arc_agent.models.gemma_transformers import GemmaTransformersChatModel
+
+    chat_model = GemmaTransformersChatModel()
+    long_system = "A" * 1200  # 1200 characters
+    messages = [
+        SystemMessage(content=long_system),
+        HumanMessage(content="Decide next action."),
+    ]
+    formatted, _ = chat_model._extract_images_and_text(messages)
+    # The role: system content must be short (<150 chars) to prevent Gemma 4 MoE empty output bug
+    sys_turn = next(m for m in formatted if m["role"] == "system")
+    sys_text = sys_turn["content"][0]["text"]
+    assert len(sys_text) < 150
+
+    # The full guidelines must be retained in the user turn
+    user_turn = next(m for m in formatted if m["role"] == "user")
+    user_text = user_turn["content"][0]["text"]
+    assert long_system in user_text
+    assert "Decide next action." in user_text
+
+
+def test_runner_halts_on_consecutive_llm_failures(tmp_path):
+    """Verify runner immediately halts if LLM produces 3 consecutive unparseable outputs."""
+    from tests.test_runner_budget import _build_test_agent, DummyEnvWithInfo
+    from arc_agent.agent.runner import ARCRunner
+
+    agent = _build_test_agent(tmp_path)
+    # Simulate LLM failing to parse
+    agent.brain._invoke = lambda *a, **k: "<EMPTY>"
+    runner = ARCRunner(agent, max_iterations_per_level=1)
+    grid = np.zeros((5, 5), dtype=np.int32)
+    env = DummyEnvWithInfo(grid, baseline_actions=[10])
+
+    runner.play_game(
+        game_id="halt_test",
+        env=env,
+        max_levels=1,
+        max_steps_per_level=10,
+    )
+    # Should halt at 3 failures, not drain the full 10 steps
+    assert agent.consecutive_parse_failures >= 3
+    assert runner.total_actions_taken <= 4
+

@@ -257,6 +257,14 @@ class ARCRunner:
                 game_id, level, s0_state, current_state, current_valid_actions, debug_note, budget_context=budget_context
             )
 
+            if getattr(self.agent, "consecutive_parse_failures", 0) >= 3:
+                print(
+                    f"\n⛔ [HALT ON MODEL FAILURE] Aborting Level {level} step loop at Step {step_count + 1}: "
+                    f"LLM produced {self.agent.consecutive_parse_failures} consecutive empty or unparseable outputs. "
+                    "Halting immediately to protect the move budget from being burned on an unresponsive model!"
+                )
+                return current_state, current_state.game_state, step_count
+
             step_count += 1
             self._total_actions_taken += 1
             action_name = getattr(action, "name", str(action)).upper()

@@ -45,10 +45,12 @@ class GemmaTransformersChatModel(BaseChatModel):
         """Parses LangChain messages into HuggingFace chat template format and extracted PIL images."""
         formatted_messages = []
         pil_images = []
+        system_texts = []
 
         for msg in messages:
             if isinstance(msg, SystemMessage):
-                formatted_messages.append({"role": "system", "content": [{"type": "text", "text": msg.content}]})
+                if msg.content:
+                    system_texts.append(str(msg.content))
             elif isinstance(msg, HumanMessage):
                 if isinstance(msg.content, str):
                     formatted_messages.append({"role": "user", "content": [{"type": "text", "text": msg.content}]})
@@ -86,6 +88,29 @@ class GemmaTransformersChatModel(BaseChatModel):
                 formatted_messages.append({"role": "assistant", "content": [{"type": "text", "text": str(msg.content)}]})
             elif isinstance(msg, ChatMessage):
                 formatted_messages.append({"role": msg.role, "content": [{"type": "text", "text": str(msg.content)}]})
+
+        # Gemma 4 MoE NVFP4 bug fix: system prompts > 400-500 characters trigger immediate empty responses (1-3 tokens).
+        # We split or merge: keep system role <= 150 chars, and prepend full detailed guidelines to the first user turn.
+        if system_texts:
+            full_system = "\n\n".join(system_texts)
+            if len(full_system) > 400:
+                short_sys = "You are an expert agent solving ARC-AGI-3 grid reasoning puzzles."
+                formatted_messages.insert(0, {"role": "system", "content": [{"type": "text", "text": short_sys}]})
+                # Prepend full system prompt into the first user message
+                user_found = False
+                for m in formatted_messages:
+                    if m["role"] == "user":
+                        for c in m["content"]:
+                            if c.get("type") == "text":
+                                c["text"] = f"[System Instructions]\n{full_system}\n\n[Task]\n{c['text']}"
+                                user_found = True
+                                break
+                        if user_found:
+                            break
+                if not user_found:
+                    formatted_messages.append({"role": "user", "content": [{"type": "text", "text": full_system}]})
+            else:
+                formatted_messages.insert(0, {"role": "system", "content": [{"type": "text", "text": full_system}]})
 
         return formatted_messages, pil_images
 

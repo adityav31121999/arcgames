@@ -55,6 +55,7 @@ class ARCLangChainAgent:
         self.memory = TrajectoryMemory()
         self.cache = KnowledgeCache(memory_root=memory_root)
         self.world_model = WorldModel()
+        self.consecutive_parse_failures: int = 0
 
     def set_action_space(self, action_space: Optional[Any]) -> None:
         """Dynamically builds and sets system prompts across all chains matching the actual action space."""
@@ -194,6 +195,7 @@ class ARCLangChainAgent:
             self.world_model.update_from_text(raw)
         action, action_data = ARCActionMapper.parse(raw, allowed_actions, grid_shape, prohibited=prohibited)
         if action is not None:
+            self.consecutive_parse_failures = 0
             return action, action_data, context_note
 
         # Retry once with explicit format reminder
@@ -220,7 +222,15 @@ class ARCLangChainAgent:
             self.world_model.update_from_text(raw_retry)
         action, action_data = ARCActionMapper.parse(raw_retry, allowed_actions, grid_shape, prohibited=prohibited)
         if action is not None:
+            self.consecutive_parse_failures = 0
             return action, action_data, context_note
+
+        self.consecutive_parse_failures += 1
+        if self.consecutive_parse_failures >= 3:
+            print(
+                f"\n🚨 [CRITICAL LLM FAILURE] Model produced {self.consecutive_parse_failures} consecutive empty or unparseable responses! "
+                "The LLM is unresponsive or outputting corrupted tokens."
+            )
 
         return self._safe_fallback(allowed_actions, state_hash, grid_shape, context_note, current_grid=current_state.grid)
 
@@ -313,7 +323,15 @@ class ARCLangChainAgent:
     ) -> None:
         """Appends step entry to markdown actions log."""
         ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-        action_name = action_sig.name if action_sig else "UNKNOWN"
+        if action_sig:
+            name = action_sig.name
+            if action_sig.data:
+                data_str = " ".join(f"{k.upper()}={v}" for k, v in action_sig.data.items())
+                action_name = f"{name}({data_str})"
+            else:
+                action_name = str(name)
+        else:
+            action_name = "UNKNOWN"
         line = f"| {step_index} | {ts} | {action_name} | {hash_before[:12]} -> {hash_after[:12]} |\n"
         self.cache.append_action_log(game_id, level, line)
 
