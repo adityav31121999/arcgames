@@ -4,46 +4,36 @@ from typing import Any, Iterable, Optional
 
 ACTION_DESCRIPTIONS = {
     "RESET": "Initialize or restarts the game/level state.",
-    "ACTION1": "Simple action - varies by game (semantically mapped to up).",
-    "ACTION2": "Simple action - varies by game (semantically mapped to down).",
-    "ACTION3": "Simple action - varies by game (semantically mapped to left).",
-    "ACTION4": "Simple action - varies by game (semantically mapped to right).",
-    "ACTION5": "Simple action - varies by game (e.g., interact, select, rotate, attach/detach, execute, etc.).",
-    "ACTION6": "Complex action requiring x,y coordinates (0-63 range).",
-    "ACTION7": "Simple action - Undo (e.g., interact, select).",
+    "ACTION1": "Upward movement / direction.",
+    "ACTION2": "Downward movement / direction.",
+    "ACTION3": "Leftward movement / direction.",
+    "ACTION4": "Rightward movement / direction.",
+    "ACTION5": "Interact / select / rotate / execute action.",
+    "ACTION6": "Click at coordinate X,Y (0-63 range).",
+    "ACTION7": "Undo action.",
 }
 
 SYSTEM_PROMPT_TEMPLATE = (
-    "You are solving grid-puzzles with agentic AI. "
-    "There are multiple different levels in this game, and the objective remains consistent. "
-    "You have to find the objective and discover the possible mechanics.\n"
-    "Each level may have entirely unique gameplay rules, player shapes, and operators. "
-    "Following are some pointers to consider:\n"
-    "- There is a controllable player object (identify which shape/colored block shifts coordinates when you issue actions) "
-    "that must move to meet the objective.\n"
-    "- The game is composed of grid-like puzzle and objects of various size and shapes.\n"
-    "- These are to provide multiple features like movement, change, blocking the movement, allowing increase in steps, etc.\n"
-    "- There can be multiple colors in which the player can move, denoting walkable corridors, interactive tiles, or target areas.\n"
-    "- There are actions allowed for this game, use ONLY those:\n"
-    "{actions_block}\n"
-    "- If there are objects within walkable regions, with different colors, try to walk over them to see if they act as active operators.\n"
-    "- Discover and step onto interactive modifier or operator tiles (like specific colored tiles, "
-    "'+' or weirdly shaped objects, or colored shapes with shells, etc.) "
-    "to see if they transform, rotate, or modify the target block.\n"
-    "- Don't repeat previous moves if they immediately bounce you back to your previous state.\n"
-    "- If a movement is blocked (resulting in a NO-OP), immediately choose a different direction to explore alternative paths.\n"
-    "- Check for shapes or colors that are not off compared to other regions and try to move player/object on it to see change.\n"
-    "- There is a tracker in the game that checks number of total steps allowed and number of trials allowed for each level. "
-    "Its on either edges with two paired rows or columns or it can be on any edges in certain games.\n"
-    "- Some games are logic or layout puzzles with no explicit player avatar. "
-    "Do not assume a player exists; the relevant state may be an object, region, "
-    "cursor, selector, or whole-board configuration.\n"
-    "- A common failure mode is treating a segmented edge bar (step counter/timer) "
-    "as clickable puzzle pieces. If a strip of small blocks sits flush against an "
-    "edge and only that strip changes — classify it as HUD/timer state, NOT an object.\n"
-    "- When you have a working plan, you may prefix with: 'Plan: <one sentence>'\n"
-    "- Optional labeled prefixes to help maintain working memory: "
-    "'World model:', 'Goal model:', 'Action model:', 'Recent findings:', 'Plan:'\n"
+    "You are an expert AI agent solving 2D ARC-AGI-3 grid reasoning puzzles.\n"
+    "Respond in clear, concise English only.\n"
+    "Available actions for this game:\n"
+    "{actions_block}\n\n"
+    "Core Guidelines:\n"
+    "- Identify the interactive puzzle elements and rule mechanics through structured actions.\n"
+    "- Border glyphs may be HUD trackers or interactive elements; treat their role as unknown until tested.\n"
+    "- A NO-OP means no detected visible change; it does not prove a wall or invalid action. Test alternatives and prerequisites.\n"
+    "- Maintain working memory using labeled prefixes: 'World model:', 'Goal model:', 'Action model:', 'Recent findings:', 'Plan:'."
+)
+
+SYSTEM_PROMPT_CLICK_ONLY = (
+    "You are an expert AI agent solving 2D ARC-AGI-3 click puzzles.\n"
+    "Respond in clear, concise English only.\n"
+    "The ONLY valid action in this game is ACTION6 (Click at coordinate X,Y).\n\n"
+    "Core Guidelines:\n"
+    "- Identify distinct foreground shapes, symbols, icons, or clusters.\n"
+    "- Border and corner markers may be HUD or interactive; use observed effects to determine their role.\n"
+    "- Prefer clicking unclicked objects at their solid center to discover mechanics.\n"
+    "- Maintain working memory using labeled prefixes: 'World model:', 'Goal model:', 'Action model:', 'Recent findings:', 'Plan:'."
 )
 
 
@@ -54,16 +44,29 @@ def build_system_prompt(action_space: Optional[Iterable[Any]] = None) -> str:
         action_space: List/iterable of GameAction enums or string names actually available.
     """
     if not action_space:
-        # Default fallback to all standard actions
         lines = [f"    - {name}: {desc}" for name, desc in ACTION_DESCRIPTIONS.items()]
-    else:
-        lines = []
-        for a in action_space:
-            name = getattr(a, "name", str(a))
-            if name in ACTION_DESCRIPTIONS:
-                lines.append(f"    - {name}: {ACTION_DESCRIPTIONS[name]}")
-            else:
-                lines.append(f"    - {name}: Action supported by environment.")
+        actions_block = "\n".join(lines)
+        return SYSTEM_PROMPT_TEMPLATE.format(actions_block=actions_block)
+
+    names = [
+        getattr(a, "name", str(a)).upper()
+        for a in action_space
+        if getattr(a, "name", str(a)).upper() not in ("RESET", "0", "GAMEACTION.RESET")
+    ]
+    # Check if click-only
+    if names and all(n in ("ACTION6", "ACTION_6", "6", "CLICK", "MOUSE") for n in names):
+        return SYSTEM_PROMPT_CLICK_ONLY
+
+    lines = []
+    for a in action_space:
+        name = getattr(a, "name", str(a))
+        uname = name.upper()
+        if uname in ACTION_DESCRIPTIONS:
+            lines.append(f"    - {name}: {ACTION_DESCRIPTIONS[uname]}")
+        elif name in ACTION_DESCRIPTIONS:
+            lines.append(f"    - {name}: {ACTION_DESCRIPTIONS[name]}")
+        else:
+            lines.append(f"    - {name}: Action supported by environment.")
     actions_block = "\n".join(lines)
     return SYSTEM_PROMPT_TEMPLATE.format(actions_block=actions_block)
 
@@ -71,85 +74,59 @@ def build_system_prompt(action_space: Optional[Iterable[Any]] = None) -> str:
 SYSTEM_PROMPT = build_system_prompt()
 
 PROMPT_ASSUME = (
-    "Consider the given visual of starting point of game, only make "
-    "assumptions about the environment and what can be the possible "
-    "objective to complete this level. Discover tracker for steps and tries. "
-    "To solve this level, explicitly analyze and identify:\n"
-    "1) What colored block represents the controllable player?\n"
-    "2) What represents the 'target' block, and where is the reference 'template' it must match?\n"
-    "3) What are the active modifier/operator tiles (e.g., grey squares, '+' shapes) that the player can step on to trigger transformations?\n"
-    "Define all shapes that you encounter. No need to be perfect with it, we can verify with further iterations."
+    "Analyze the initial visual layout and metadata to form an initial hypothesis in English.\n"
+    "Identify key visual elements. Label proposed object roles and goals as hypotheses, not verified facts.\n"
+    "Format your response strictly using these labeled sections (1-2 concise sentences each):\n"
+    "World model: <layout, grid dimensions, background vs foreground shapes>\n"
+    "Goal model: <perceived puzzle objective and win condition>\n"
+    "Action model: <expected effect of allowable actions on these objects>\n"
+    "Recent findings: <initial visual state observations>\n"
+    "Plan: <concrete first action hypothesis to test mechanics>"
 )
 
 PROMPT_COMP_ASSUME = (
-    "Consider the assumptions and mechanics from previous levels and "
-    "original state of this level, and provide the objective in this level and "
-    "how much it changed. Analyze if player colors, target blocks, or operator tiles "
-    "have shifted colors or positions, and adapt the gameplay rules accordingly."
+    "Compare this level's initial layout with previous level findings to identify rule changes in English.\n"
+    "Format your response strictly using these labeled sections:\n"
+    "World model: <what visual elements carried over or shifted>\n"
+    "Goal model: <updated objective for this level>\n"
+    "Action model: <refined understanding of action mechanics>\n"
+    "Recent findings: <new shapes or color variations observed in this level>\n"
+    "Plan: <updated plan for solving this level>"
 )
 
 PROMPT_ANALYSE_VISUAL = (
-    "Differentiate between current step state and previous step state using "
-    "the ground-truth coordinate changes provided. Find the player or object to move. "
-    "Analyze if stepping on a tile triggered a change in a separate target block elsewhere on the grid. "
-    "Don't think of tracker with columns or rows in the grid on edges as player. "
-    "Detect the objects of interest. "
-    "Don't go back in opposite direction, if there is no powerup or gain in the game."
+    "Analyze the visual change caused by the last action using the pixel diff bounding box in English.\n"
+    "Use these labeled fields: Recent findings: <observed changes only>; Open questions: <uncertain cause or goal progress>. Put each field on its own line. A changed board alone does not prove progress."
 )
 
 PROMPT_STATE_DEBUG = (
-    "Analyze the latest move transition using the actions log, rules, and "
-    "pixel coordinate changes, and recommend the next action. If a movement action "
-    "was blocked, suggest moving in another direction. If stepping on a tile "
-    "modified the target block, recommend repeating or adjusting interactions with "
-    "that tile to match the template. Pace your recommendations according to the "
-    "remaining move budget."
+    "Evaluate the latest action result using the recent action history and pixel changes in English.\n"
+    "Separate observed effects from possible causes. A NO-OP does not prove collision, and a change does not prove progress. Treat explanations as hypotheses until tested.\n"
+    "Reply using three labeled lines:\n"
+    "Recent findings: <observed effect supported by the transition>\n"
+    "Open questions: <uncertain mechanism and a test to distinguish explanations>\n"
+    "Plan: <next action to test>"
 )
 
 PROMPT_ACTION = (
-    "Using original state, this and previous state, compare with "
-    "assumptions, mechanics and all actions performed, and provide the "
-    "next action. Always keep moving, no matter if level is finished or not. "
-    "Actively prioritize moving the player toward modifier/operator tiles to "
-    "transform the target block to match the goal template. "
-    "Pace your exploration according to the remaining move budget — do not meander if budget is limited."
+    "Select the next action to advance toward the objective based on current state and verified rules.\n"
+    "Avoid repeating an unchanged experiment; retry a NO-OP when state or prerequisites change."
 )
 
 PROMPT_CLICK_ONLY_TARGET = (
-    "This game's ONLY available action is ACTION6 (click at x,y). There are no "
-    "directional moves, so every click must be aimed at a specific object — never "
-    "a blind guess on background.\n"
-    "Before choosing coordinates:\n"
-    "1) Scan the grid for distinct, self-contained shapes — especially bracket-like "
-    "forms ('[', ']', 'C', 'U', or paired open/closed segments), arrows, or "
-    "geometric clusters that stand apart from flat background color.\n"
-    "2) Ignore fixed-position markers in the corners or edges (small repeating "
-    "diamond/square glyphs) — these are try/step trackers, not interactive objects. "
-    "If the same shape appears unchanged across steps in a corner, it is HUD, not a target.\n"
-    "3) Prefer clicking objects you have NOT yet clicked, using the tried-coordinates "
-    "log below. Only re-click an object if you have a specific hypothesis to test "
-    "(e.g. 'clicking it a second time may toggle it back').\n"
-    "4) Aim for the visual center of the object's bounding box, not its edge — "
-    "brackets and paired shapes especially can fail to register if you click the "
-    "gap between their two halves rather than a solid pixel.\n"
+    "Select the best target coordinates for ACTION6.\n"
+    "Prefer unexplored foreground objects at a solid pixel. Do not exclude border targets solely by location; revisit targets if the state or prerequisites changed.\n"
     "Objects detected this frame:\n{object_list}\n"
-    "Coordinates already tried and their results:\n{click_history}\n"
+    "Coordinates already tried:\n{click_history}\n"
 )
 
 PROMPT_ITERATION_REVIEW = (
-    "An attempt at this level just ended without success (game over or step limit reached). "
-    "Review the COMPLETE action log and knowledge store below.\n"
-    "Your job is twofold:\n"
-    "1) Identify structural flaws in exploration strategy — e.g. failing to turn at "
-    "junctions, repeating a linear corridor until hitting a wall, re-visiting dead ends, "
-    "or ignoring alternative branches.\n"
-    "2) Rewrite the VERIFIED MECHANICS AND RULES list: merge duplicate entries, drop "
-    "generic 'movement works' confirmations, and add concrete navigation rules (e.g., "
-    "'At corridor intersections, change directions to explore branches rather than moving straight').\n"
-    "DO NOT blame specific action numbers as inherently bad. Focus on exploration behavior.\n"
+    "An attempt at this level just ended. Review the actions log and knowledge store in English.\n"
+    "1) Identify the exploration flaw (e.g. loops, dead ends, unclicked objects).\n"
+    "2) Propose navigation hypotheses with supporting action/step references and counterexamples; do not claim verification from your own verdict.\n"
     "Respond strictly in this format:\n"
-    "FAILURE_REASON: <one or two sentences, focusing on search/exploration strategy>\n"
+    "FAILURE_REASON: <one sentence on search strategy>\n"
     "RULES:\n"
-    "- <consolidated rule 1>\n"
-    "- <consolidated rule 2>\n"
+    "- <candidate rule and supporting steps>\n"
+    "- <candidate rule and supporting steps>\n"
 )

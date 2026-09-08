@@ -103,7 +103,7 @@ model:
   device: "cuda:0"
   torch_dtype: "bfloat16"
   attn_implementation: "sdpa"
-  max_context_length: 8192
+  max_context_length: 81930
 ```
 
 ---

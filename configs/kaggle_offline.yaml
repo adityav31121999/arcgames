@@ -4,7 +4,7 @@ model:
   device: "cuda:0"
   torch_dtype: "bfloat16"
   attn_implementation: "sdpa"
-  max_context_length: 4096
+  max_context_length: 81930
   trust_remote_code: true
   temperature: 0.0
   top_p: 0.95

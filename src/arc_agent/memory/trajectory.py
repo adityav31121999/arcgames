@@ -53,11 +53,6 @@ class TrajectoryMemory:
         min_x, max_x = int(np.min(x_indices)), int(np.max(x_indices))
         min_y, max_y = int(np.min(y_indices)), int(np.max(y_indices))
 
-        offset = 4 if grid1.shape[0] >= 10 and grid1.shape[1] >= 10 else 0
-        min_x += offset
-        max_x += offset
-        min_y += offset
-        max_y += offset
 
         if self.sprite_box is None:
             self.sprite_box = (min_x, max_x, min_y, max_y)
@@ -109,13 +104,14 @@ class TrajectoryMemory:
 
     def recent_trajectory_text(self, n: int = 6) -> str:
         parts = []
-        for step in self.trajectory[-n:]:
+        recent_steps = self.trajectory[-n:]
+        for step in recent_steps:
             if step.action_sig is None:
-                parts.append(f"S0[{step.state_hash[:8]}]")
+                parts.append("Start")
             else:
-                tag = {True: "OK", False: "NOOP", None: "?"}.get(step.changed, "?")
-                parts.append(f"--{step.action_sig.name}[{tag}]--> S[{step.state_hash[:8]}]")
-        return " ".join(parts)
+                tag = {True: "Changed", False: "NO-OP", None: "?"}.get(step.changed, "?")
+                parts.append(f"{step.action_sig} [{tag}]")
+        return " -> ".join(parts) if parts else "No moves yet"
 
     def oscillation_target(self) -> Optional[str]:
         if len(self.state_history) < 3:
@@ -156,10 +152,9 @@ class TrajectoryMemory:
         tried_desc = ", ".join(parts)
 
         return (
-            f"[LOOP WARNING] State {state_hash[:8]} visited {visits}x. "
-            f"Already tried from here: {tried_desc}. Simple (parameter-free) "
-            f"repeats are pre-filtered from your action list. For coordinate "
-            f"actions, you MUST pick a DIFFERENT X/Y than any listed above."
+            f"[LOOP WARNING] Current board state visited {visits} times. "
+            f"Already tried from here: {tried_desc}. "
+            f"Pick an alternate untried direction or coordinate."
         )
 
     def consecutive_action_warning(self, threshold: int = 5) -> str:

@@ -306,7 +306,7 @@ class ARCRunner:
                 zero_diff_streak = 0
                 if fast_mode and not is_repeat_state and zero_diff_streak < self.agent.stuck_threshold:
                     visual_analysis = f"Changed grid: {diff}"
-                    debug_note = f"[PROGRESS] {action_name} altered board: {diff}"
+                    debug_note = f"[CHANGE] {action_name} altered board: {diff}"
                 else:
                     render_live(next_state, status=f"👁️ Step {step_count}/{max_steps} (Try {iteration}/{max_iterations}) — Running visual analysis...")
                     visual_analysis = self.agent.eye.analyse_visual(game_id, s0_state, next_transition, diff)
@@ -322,6 +322,7 @@ class ARCRunner:
                     )
 
             if visual_analysis:
+                self.agent.world_model.recent_findings = visual_analysis
                 self.agent.world_model.update_from_text(visual_analysis)
             if debug_note:
                 self.agent.world_model.update_from_text(debug_note)

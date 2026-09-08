@@ -14,7 +14,6 @@ _LABELS = [
     "Plan",
     "Cross-level notes",
 ]
-_MAX_FIELD_CHARS = 300
 
 
 def _extract_labeled_blocks(content: str, labels: list[str]) -> Dict[str, str]:
@@ -29,6 +28,9 @@ def _extract_labeled_blocks(content: str, labels: list[str]) -> Dict[str, str]:
         while candidate.startswith(("-", "*")):
             candidate = candidate[1:].lstrip()
         lowered = candidate.lower()
+        if lowered.startswith("action="):
+            current_label = None
+            continue
 
         matched_label: str | None = None
         inline_value = ""
@@ -97,7 +99,7 @@ class WorldModel:
         for key, value in extracted.items():
             if value:
                 target_attr = _FIELD_KEY_MAP.get(key, key)
-                clean_val = value[:_MAX_FIELD_CHARS].strip()
+                clean_val = value.strip()
                 if clean_val and hasattr(self, target_attr):
                     setattr(self, target_attr, clean_val)
 

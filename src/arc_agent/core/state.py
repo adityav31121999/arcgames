@@ -35,7 +35,7 @@ def compute_state_hash(
     levels_completed: Optional[int] = None,
     include_semantic: bool = True,
 ) -> str:
-    """Full SHA-256 state hashing strategy, ignoring tracker borders."""
+    """Hash the full board, including borders, with optional semantic state."""
     if grid is None or grid.size == 0:
         base = "EMPTY_STATE"
     else:

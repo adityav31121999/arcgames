@@ -8,7 +8,7 @@ model:
   device: "cuda:0"
   torch_dtype: "bfloat16"
   attn_implementation: "sdpa" # Or "flash_attention_2"
-  max_context_length: 32768
+  max_context_length: 81930
   trust_remote_code: true
   temperature: 0.0
   top_p: 0.95

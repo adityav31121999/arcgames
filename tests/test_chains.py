@@ -75,8 +75,8 @@ def test_dynamic_system_prompt_builder():
     # 2. ls20 scenario: only ACTION1..4 allowed
     ls20_actions = [Action.ACTION1, Action.ACTION2]
     custom_prompt = build_system_prompt(ls20_actions)
-    assert "ACTION1: Simple action" in custom_prompt
-    assert "ACTION2: Simple action" in custom_prompt
+    assert "ACTION1: Upward movement" in custom_prompt
+    assert "ACTION2: Downward movement" in custom_prompt
     # Must NOT contain actions that don't exist for this game
     assert "ACTION5" not in custom_prompt
     assert "ACTION6" not in custom_prompt

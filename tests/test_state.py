@@ -65,3 +65,16 @@ def test_transition_computation():
     assert transition.changed is True
     assert transition.is_noop is False
     assert transition.action_sig == sig
+
+
+def test_border_only_change_has_distinct_hash_and_is_not_noop():
+    before = np.zeros((16, 16), dtype=int)
+    after = before.copy()
+    after[1, 1] = 9
+    s0 = ARCState.create("g", 1, 0, DummyObservation(before))
+    s1 = ARCState.create("g", 1, 1, DummyObservation(after))
+    assert s0.state_hash != s1.state_hash
+    assert compute_state_hash(before, include_semantic=False) != compute_state_hash(after, include_semantic=False)
+    transition = compute_transition(s0, s1, ActionSignature("ACTION1"))
+    assert transition.changed is True
+    assert transition.is_noop is False

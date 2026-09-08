@@ -55,7 +55,7 @@ class DebuggerChain:
         """Evaluates whether the last move was expected, blocked, or altered the target."""
         actions_log = cache.actions_log(game_id, level) if cache else ""
         scratch = cache.scratch(game_id) if cache else ""
-        action_line = str(transition.action_sig.name) if transition.action_sig else "Initial step"
+        action_line = str(transition.action_sig) if transition.action_sig else "Initial step"
         budget_line = f"\nMove Budget Status: {budget_context}" if budget_context else ""
 
         prompt = f"""{PROMPT_STATE_DEBUG}{budget_line}
@@ -64,12 +64,15 @@ Action causing transition: {action_line}
 Ground-truth pixel changes: {diff_text}
 Visual context: {visual_analysis}
 Recent Actions: {actions_log}
-Known Rules: {scratch}
+Memory (includes unverified hypotheses): {scratch}
 
-JSON State Metadata of current step:
-{transition.current.proper_json_repr}
+State Metadata of current step:
+{transition.current.compact_json_repr}
 
-Reply in at most 3 short lines: (1) was this transition expected or blocked/wall collision, (2) recommendation for next step. Keep headers/markdown out."""
+Previous board (before this action):
+{transition.previous.text_repr if transition.previous else "Unavailable"}
+Detected gameplay change: {transition.changed}
+Use only the three labeled lines requested above."""
 
         pil_img = transition.current.get_pil_image()
         return self._invoke(prompt, image_obj=pil_img)
@@ -90,17 +93,19 @@ Reply in at most 3 short lines: (1) was this transition expected or blocked/wall
 
         prompt = f"""{PROMPT_STATE_DEBUG}
 
-Action '{attempted_action}' produced NO state change.
+Attempted action: {attempted_action}
+Action signature including coordinates: {transition.action_sig}
+Detected gameplay change: {transition.changed}
 Ground-truth pixel changes: {diff_text}
 Recent Actions: {actions_log}
 Scratchpad: {scratch}
 
-JSON State Metadata of current step:
-{transition.current.proper_json_repr}
+State Metadata of current step:
+{transition.current.compact_json_repr}
 
-Classify result. Begin response strictly with:
-EXPECTED: <reason this is a normal rule or wall collision>
-DIVERGED: <reason logic is incorrect>"""
+Previous board (before this action):
+{transition.previous.text_repr if transition.previous else "Unavailable"}
+Use only the three labeled lines requested above. If the cause is unknown, say so."""
 
         pil_img = transition.current.get_pil_image()
         return self._invoke(prompt, image_obj=pil_img)

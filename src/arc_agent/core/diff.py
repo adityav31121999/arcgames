@@ -31,17 +31,12 @@ def extract_grid_array(obs: Any) -> Optional[np.ndarray]:
 
 
 def get_gameplay_grid(grid: Optional[np.ndarray]) -> Optional[np.ndarray]:
-    """Crops out the outer 4-pixel border to isolate gameplay and ignore edge trackers."""
-    if grid is None:
-        return None
-    height, width = grid.shape
-    if height >= 10 and width >= 10:
-        return grid[4:-4, 4:-4]
+    """Return the full observation; border location alone does not establish HUD status."""
     return grid
 
 
 def detect_real_change(grid1: Optional[np.ndarray], grid2: Optional[np.ndarray]) -> bool:
-    """Checks if actual gameplay changes occurred, ignoring status bar edge changes."""
+    """Check for visible changes anywhere on the board, without inferring their cause."""
     if grid1 is None or grid2 is None:
         return False
     if grid1.shape != grid2.shape:
@@ -56,7 +51,7 @@ def detect_real_change(grid1: Optional[np.ndarray], grid2: Optional[np.ndarray])
 def get_grid_difference_text(grid1: Optional[np.ndarray], grid2: Optional[np.ndarray]) -> str:
     """Calculates grid changes instantly using NumPy to bypass slow vision calls.
 
-    Returns a tight spatial bounding box, excluding status bar ticks.
+    Returns a tight spatial bounding box including changes at the edges.
     """
     if grid1 is None or grid2 is None:
         return "Previous or current grid is unavailable."
@@ -69,16 +64,15 @@ def get_grid_difference_text(grid1: Optional[np.ndarray], grid2: Optional[np.nda
     diff = (gp_grid1 != gp_grid2)
     num_changes = int(np.sum(diff))
     if num_changes == 0:
-        return "No visual changes occurred on this step (Move Blocked / NO-OP)."
+        return "No visible changes detected on this step (NO-OP); cause unknown."
 
     y_indices, x_indices = np.where(diff)
     min_x, max_x = int(np.min(x_indices)), int(np.max(x_indices))
     min_y, max_y = int(np.min(y_indices)), int(np.max(y_indices))
 
-    offset = 4 if grid1.shape[0] >= 10 and grid1.shape[1] >= 10 else 0
     return (
         f"{num_changes} pixels modified in bounding box "
-        f"X=[{min_x + offset}, {max_x + offset}], Y=[{min_y + offset}, {max_y + offset}]."
+        f"X=[{min_x}, {max_x}], Y=[{min_y}, {max_y}]."
     )
 
 
@@ -99,5 +93,4 @@ def extract_diff_bounding_box(
     min_x, max_x = int(np.min(x_indices)), int(np.max(x_indices))
     min_y, max_y = int(np.min(y_indices)), int(np.max(y_indices))
 
-    offset = 4 if grid1.shape[0] >= 10 and grid1.shape[1] >= 10 else 0
-    return (min_x + offset, max_x + offset, min_y + offset, max_y + offset)
+    return (min_x, max_x, min_y, max_y)

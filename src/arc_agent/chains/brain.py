@@ -22,10 +22,13 @@ class BrainChain:
         """Updates the system prompt for dynamic action spaces."""
         self.system_prompt = system_prompt
 
-    def _invoke(self, prompt: str, temperature: float = 0.0, max_tokens: int = 32, stop: Optional[List[str]] = None) -> str:
+    def _invoke(self, prompt: str, temperature: float = 0.0, max_tokens: int = 32, stop: Optional[List[str]] = None, image_obj: Optional[Any] = None) -> str:
         messages = [
             SystemMessage(content=self.system_prompt),
-            HumanMessage(content=prompt),
+            HumanMessage(content=prompt if image_obj is None else [
+                {"type": "text", "text": prompt},
+                {"type": "image", "image": image_obj},
+            ]),
         ]
         try:
             invoke_kwargs = {
@@ -57,17 +60,16 @@ class BrainChain:
         actions_log = cache.actions_log(game_id, level)
         scratch = cache.scratch(game_id)
 
-        if current_state.step == 0:
-            grid_repr_context = f"S0 Matrix (Hash: {s0_state.state_hash[:12]}):\n{s0_state.text_repr}"
-        else:
-            grid_repr_context = (
-                f"Initial S0 Hash: {s0_state.state_hash[:12]} | Current St Hash: {current_state.state_hash[:12]}\n"
-                f"Grid Shape: {current_state.grid.shape if current_state.grid is not None else 'Unknown'}"
-            )
+        grid_repr_context = (
+            f"Current board image attached. Grid shape (height, width): {current_state.grid.shape}. "
+            "Coordinates use original grid cells: X is column, Y is row, origin at top left."
+            if current_state.grid is not None else "No current board available."
+        )
 
         action_names = [getattr(a, "name", str(a)) for a in valid_actions]
         world_model_section = f"\n{world_model_block}\n" if world_model_block else ""
         budget_section = f"Move Budget Status: {budget_context}\n" if budget_context else ""
+        context_section = f"Navigation Context: {context_note}\n" if context_note else ""
 
         if is_click_only(valid_actions):
             base_prompt = PROMPT_CLICK_ONLY_TARGET.format(
@@ -78,26 +80,29 @@ class BrainChain:
             base_prompt = PROMPT_ACTION
 
         prompt = f"""{base_prompt}
-{world_model_section}{budget_section}
+{world_model_section}{budget_section}{context_section}
+State Metadata:
+{current_state.compact_json_repr}
 {grid_repr_context}
 
-JSON State Metadata:
-{current_state.proper_json_repr}
+Recent Actions Log:
+{actions_log}
 
-Knowledge Store: {scratch}
-Actions Log: {actions_log}
-Tracker/Loop/Sprite Context: {context_note}
-Legal actions (Prohibited/redundant ones are already filtered - choose from this list): {action_names}
+Knowledge Store:
+{scratch}
 
-Optionally prefix with: Plan: <one sentence goal and next step>
-Reply strictly in format: ACTION=<NAME> [X=<int> Y=<int>]
+Legal actions: {action_names}
+
+Reply format:
+Plan: <one sentence goal and rationale>
+ACTION=<NAME> [X=<int> Y=<int>]
 Next action:"""
 
         return self._invoke(
             prompt,
-            temperature=0.4,
+            temperature=0.0,
             max_tokens=min(128, self.max_tokens),
-            stop=["\n\n"],
+            image_obj=current_state.get_pil_image(),
         )
 
     def one_shot_plan(
@@ -121,10 +126,10 @@ Next action:"""
 Synthesize a ONE-SHOT plan for Level {level}. Format EACH line strictly as:
 ACTION=<NAME> [X=<int> Y=<int>]
 
-Cross-Level S0 Analysis: {ostate}
+Prior Level Analyses: {ostate}
 Knowledge Store: {scratch}
 Actions Log: {actions_log}
-S0 Matrix (Hash: {s0_state.state_hash[:12]}): {s0_state.text_repr}
+S0 Grid Matrix: {s0_state.text_repr}
 Valid Actions: {valid_names}
 
 Ordered action sequence:"""

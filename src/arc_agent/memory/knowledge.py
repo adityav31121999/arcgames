@@ -35,8 +35,10 @@ def append_text(path: Path, text: str) -> None:
             raise
 
 
-def tail_text(text: str, max_chars: int = 2500) -> str:
-    return text[-max_chars:] if len(text) > max_chars else text
+def tail_text(text: str, max_chars: Optional[int] = None) -> str:
+    if max_chars is None:
+        return text
+    return text[-max_chars:] if max_chars > 0 else ""
 
 
 def update_verified_mechanics(game_id: str, rule: str, memory_root: str | Path = "./agent_memory") -> None:
@@ -66,13 +68,15 @@ class KnowledgeCache:
         self._actions: Dict[Tuple[str, int], str] = {}
         self._ostate: Dict[str, str] = {}
 
-    def scratch(self, game_id: str, max_chars: int = 400) -> str:
+    def scratch(self, game_id: str, max_chars: Optional[int] = None) -> str:
         if game_id not in self._scratch:
             self._scratch[game_id] = read_text(scratchpad_path(game_id, self.memory_root))
         return tail_text(self._scratch[game_id], max_chars)
 
     def append_scratch(self, game_id: str, text: str) -> None:
-        self._scratch[game_id] = self._scratch.get(game_id, "") + text
+        if game_id not in self._scratch:
+            self._scratch[game_id] = read_text(scratchpad_path(game_id, self.memory_root))
+        self._scratch[game_id] = self._scratch[game_id].rstrip() + "\n\n" + text.rstrip() + "\n\n"
         append_text(scratchpad_path(game_id, self.memory_root), text)
 
     def write_scratch(self, game_id: str, text: str) -> None:
@@ -84,16 +88,18 @@ class KnowledgeCache:
         except OSError:
             pass
 
-    def ostate(self, game_id: str, max_chars: int = 1500) -> str:
+    def ostate(self, game_id: str, max_chars: Optional[int] = None) -> str:
         if game_id not in self._ostate:
             self._ostate[game_id] = read_text(ostate_path(game_id, self.memory_root))
         return tail_text(self._ostate[game_id], max_chars)
 
     def append_ostate(self, game_id: str, text: str) -> None:
-        self._ostate[game_id] = self._ostate.get(game_id, "") + text
+        if game_id not in self._ostate:
+            self._ostate[game_id] = read_text(ostate_path(game_id, self.memory_root))
+        self._ostate[game_id] = self._ostate[game_id].rstrip() + "\n\n" + text.rstrip() + "\n\n"
         append_text(ostate_path(game_id, self.memory_root), text)
 
-    def actions_log(self, game_id: str, level: int, max_chars: int = 400) -> str:
+    def actions_log(self, game_id: str, level: int, max_chars: Optional[int] = None) -> str:
         key = (game_id, level)
         if key not in self._actions:
             self._actions[key] = read_text(actions_log_path(game_id, level, self.memory_root))
@@ -101,7 +107,9 @@ class KnowledgeCache:
 
     def append_action_log(self, game_id: str, level: int, text: str) -> None:
         key = (game_id, level)
-        self._actions[key] = self._actions.get(key, "") + text
+        if key not in self._actions:
+            self._actions[key] = read_text(actions_log_path(game_id, level, self.memory_root))
+        self._actions[key] += text
         p = actions_log_path(game_id, level, self.memory_root)
         try:
             with open(p, "a", encoding="utf-8") as f:
@@ -130,7 +138,7 @@ def init_knowledge_files(
                 f"# Scratchpad — Game: {game_id}\n\n"
                 "## OBJECTIVE\nTo be inferred from S0\n\n"
                 "## HYPOTHESES & ASSUMPTIONS\n- Observing initial level layout\n\n"
-                "## VERIFIED MECHANICS AND RULES\n- Confirmed rules from completed levels carry over here\n",
+                "## VERIFIED MECHANICS AND RULES\n- No mechanics verified yet\n",
                 encoding="utf-8",
             )
 
@@ -146,8 +154,8 @@ def init_knowledge_files(
                 f"# Actions Log — Game: {game_id}, Level: {level}\n\n"
                 f"## ALLOWABLE ACTIONS FOR THIS GAME\n"
                 f"{', '.join(action_names) if action_names else 'Not specified'}\n\n"
-                "| Step | Time | Action | Hash Shift |\n"
-                "|------|------|--------|------------|\n",
+                "| Step | Time | Action | Result |\n"
+                "|------|------|--------|--------|\n",
                 encoding="utf-8",
             )
     except OSError:
@@ -161,24 +169,23 @@ def maybe_append_rule(
     changed: Optional[bool],
     cache: KnowledgeCache,
 ) -> None:
-    """Parses debugger verdict and appends to verified rules or debunked assumptions."""
-    if not debugger_verdict or is_repeat:
+    """Keep model interpretations as hypotheses; a verdict is not verification."""
+    if not debugger_verdict or is_repeat or "INFERENCE FAILED" in debugger_verdict:
         return
-
-    verdict_lower = debugger_verdict.lower()
-    clean_line = debugger_verdict.strip().split("\n")[0][:150]
-
-    if verdict_lower.startswith("diverged") or "diverg" in verdict_lower:
-        _write_scratch_section(cache, game_id, "## DEBUNKED / INVALID ASSUMPTIONS", clean_line)
-    elif changed is False or "blocked" in verdict_lower or "wall" in verdict_lower:
-        _write_scratch_section(cache, game_id, "## VERIFIED MECHANICS AND RULES", clean_line)
-    elif verdict_lower.startswith("expected"):
-        _write_scratch_section(cache, game_id, "## VERIFIED MECHANICS AND RULES", clean_line)
+    observation = (
+        "No visible gameplay change detected; cause unknown." if changed is False
+        else "Visible gameplay change detected; goal progress unknown." if changed is True
+        else "Visual change could not be determined."
+    )
+    _write_scratch_section(cache, game_id, "## OBSERVATIONS", observation)
+    _write_scratch_section(
+        cache, game_id, "## HYPOTHESES & ASSUMPTIONS", debugger_verdict.strip()
+    )
 
 
 def _write_scratch_section(cache: KnowledgeCache, game_id: str, header: str, entry_text: str) -> None:
     entry = f"- {entry_text}\n"
-    content = cache.scratch(game_id, max_chars=999999)
+    content = cache.scratch(game_id)
     if header in content:
         parts = content.split(header)
         if entry not in parts[1]:
@@ -195,7 +202,7 @@ def apply_iteration_review(
     iteration: int,
     review_text: str,
 ) -> None:
-    """Updates verified mechanics and failed notes from post-iteration review."""
+    """Stores review hypotheses and failure notes without promoting model claims to facts."""
     if not review_text or "[REVIEW INFERENCE FAILED" in review_text:
         return
 
@@ -215,9 +222,9 @@ def apply_iteration_review(
             if cleaned:
                 rules.append(cleaned)
 
-    rules_header = "## VERIFIED MECHANICS AND RULES"
+    rules_header = "## REVIEW HYPOTHESES (UNVERIFIED)"
     if rules:
-        content = cache.scratch(game_id, max_chars=999999)
+        content = cache.scratch(game_id)
         rule_block = "\n".join(f"- {r}" for r in rules)
         if rules_header in content:
             before, _, after_header = content.partition(rules_header)
@@ -231,7 +238,7 @@ def apply_iteration_review(
     if failure_reason:
         notes_header = "## FAILED ITERATION NOTES"
         entry = f"- (Level {level}, Iter {iteration}) {failure_reason}\n"
-        content = cache.scratch(game_id, max_chars=999999)
+        content = cache.scratch(game_id)
         if notes_header in content:
             before, _, after_header = content.partition(notes_header)
             next_idx = after_header.find("\n## ")

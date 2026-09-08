@@ -94,10 +94,15 @@ class ARCLangChainAgent:
 
         self.world_model.reset_level_fields()
 
+        object_list = ""
+        if s0_state.grid is not None:
+            object_list = render_detected_objects(s0_state.grid)
+        action_names = [getattr(a, "name", str(a)) for a in (valid_actions or [])]
+
         if is_first_level_of_game:
-            eye_out = self.eye.assume(game_id, level, s0_state, self.cache)
+            eye_out = self.eye.assume(game_id, level, s0_state, self.cache, object_list=object_list, action_names=action_names)
         else:
-            eye_out = self.eye.compare_assume(game_id, level, s0_state, self.cache)
+            eye_out = self.eye.compare_assume(game_id, level, s0_state, self.cache, object_list=object_list, action_names=action_names)
 
         if eye_out:
             self.world_model.update_from_text(eye_out)
@@ -337,7 +342,8 @@ class ARCLangChainAgent:
                 action_name = str(name)
         else:
             action_name = "UNKNOWN"
-        line = f"| {step_index} | {ts} | {action_name} | {hash_before[:12]} -> {hash_after[:12]} |\n"
+        result = "Changed" if hash_before != hash_after else "NO-OP (Unchanged)"
+        line = f"| {step_index} | {ts} | {action_name} | {result} |\n"
         self.cache.append_action_log(game_id, level, line)
 
     def review_failed_iteration(

@@ -29,8 +29,8 @@ class ReviewerChain:
         final_state: ARCState,
         cache: KnowledgeCache,
     ) -> str:
-        full_actions = cache.actions_log(game_id, level, max_chars=6000)
-        full_scratch = cache.scratch(game_id, max_chars=4000)
+        full_actions = cache.actions_log(game_id, level)
+        full_scratch = cache.scratch(game_id)
         final_state_name = getattr(final_state.game_state, "name", str(final_state.game_state))
 
         prompt = f"""{PROMPT_ITERATION_REVIEW}

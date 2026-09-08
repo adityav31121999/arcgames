@@ -22,7 +22,7 @@ class ModelConfig(BaseModel):
     device: str = Field(default="cuda:0", description="Target device (e.g., cuda:0)")
     torch_dtype: str = Field(default="bfloat16", description="bfloat16, float16, or float32")
     attn_implementation: str = Field(default="sdpa", description="sdpa or flash_attention_2")
-    max_context_length: int = Field(default=8192, description="Maximum context length")
+    max_context_length: int = Field(default=81930, description="Maximum context length")
     trust_remote_code: bool = Field(default=True)
     temperature: float = Field(default=0.0)
     top_p: float = Field(default=0.95)
@@ -79,6 +79,8 @@ class AppConfig(BaseModel):
             self.model.device = os.environ["DEVICE"]
         if os.getenv("TORCH_DTYPE"):
             self.model.torch_dtype = os.environ["TORCH_DTYPE"]
+        if os.getenv("MAX_CONTEXT_LENGTH"):
+            self.model.max_context_length = int(os.environ["MAX_CONTEXT_LENGTH"])
         if os.getenv("ENVIRONMENTS_DIR"):
             self.environment.environments_dir = os.environ["ENVIRONMENTS_DIR"]
         if os.getenv("ARC_BASE_URL"):

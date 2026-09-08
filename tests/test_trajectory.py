@@ -36,7 +36,9 @@ def test_trajectory_recording_and_loop_warning():
 
     warning = mem.loop_warning("hash_s0")
     assert "[LOOP WARNING]" in warning
-    assert "visited 2x" in warning
+    assert "visited 2 times" in warning
+    # Verify no raw hash is leaked in the warning
+    assert "hash_s0" not in warning
 
 
 def test_oscillation_avoidance():
@@ -59,16 +61,17 @@ def test_oscillation_avoidance():
     assert Action.ACTION4 in allowed
 
 
-def test_sprite_region_tracking():
+@pytest.mark.parametrize("x,y", [(8, 6), (1, 1), (15, 15)])
+def test_sprite_region_tracking(x, y):
     mem = TrajectoryMemory()
     g1 = np.zeros((16, 16), dtype=int)
     g2 = np.zeros((16, 16), dtype=int)
-    g2[6, 8] = 9  # Change at (Y=6, X=8)
+    g2[y, x] = 9
 
     mem.update_sprite_region(g1, g2)
     assert mem.sprite_box is not None
-    assert mem.sprite_box == (8, 8, 6, 6)
+    assert mem.sprite_box == (x, x, y, y)
 
     guidance = mem.get_sprite_guidance()
     assert "[SPRITE NAVIGATION HIGHLIGHT]" in guidance
-    assert "X=[8, 8], Y=[6, 6]" in guidance
+    assert f"X=[{x}, {x}], Y=[{y}, {y}]" in guidance
