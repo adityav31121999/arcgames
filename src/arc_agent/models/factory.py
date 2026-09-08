@@ -42,6 +42,15 @@ class ModelFactory:
 
         print(f"🚀 [MODEL FACTORY] Loading model '{model_id}' on {config.device} ({config.torch_dtype})...")
 
+        # Native Gemma 4 checkpoints must retain their architecture and generation
+        # configuration, including multiple EOS tokens. Avoid legacy global patches.
+        import json
+        checkpoint_config = Path(model_id) / "config.json"
+        if checkpoint_config.is_file():
+            metadata = json.loads(checkpoint_config.read_text(encoding="utf-8"))
+            if metadata.get("model_type") == "gemma4":
+                return ModelFactory._load_native_gemma4(config, model_id)
+
 
         # Compatibility hotfix for PIL / torchvision _Ink typing mismatch in Kaggle
         try:
@@ -491,4 +500,36 @@ class ModelFactory:
             temperature=config.temperature,
             top_p=config.top_p,
             repeat_penalty=config.repeat_penalty,
+        )
+
+    @staticmethod
+    def _load_native_gemma4(config: ModelConfig, model_id: str) -> GemmaTransformersChatModel:
+        """Load a local multimodal checkpoint without modifying library classes."""
+        import torch
+        import transformers
+
+        model_class = getattr(transformers, "Gemma4ForConditionalGeneration", None)
+        if model_class is None:
+            raise RuntimeError("Install an offline Transformers build with native Gemma4ForConditionalGeneration support.")
+        processor = transformers.AutoProcessor.from_pretrained(
+            model_id, local_files_only=True, trust_remote_code=config.trust_remote_code,
+        )
+        if getattr(processor, "image_processor", None) is None or not getattr(processor, "chat_template", None):
+            raise RuntimeError("Gemma 4 requires its multimodal processor and native chat template.")
+        load_kwargs = {
+            "local_files_only": True,
+            "trust_remote_code": config.trust_remote_code,
+            "dtype": getattr(torch, config.torch_dtype),
+            "device_map": config.device,
+        }
+        if config.attn_implementation and config.attn_implementation != "default":
+            load_kwargs["attn_implementation"] = config.attn_implementation
+        # Preserve the original backend/quantization exception; do not fall back to
+        # a different architecture or an empty generation configuration.
+        model = model_class.from_pretrained(model_id, **load_kwargs)
+        model.eval()
+        return GemmaTransformersChatModel(
+            model=model, processor=processor, device=config.device,
+            torch_dtype=config.torch_dtype, max_context_length=config.max_context_length,
+            temperature=config.temperature, top_p=config.top_p, repeat_penalty=config.repeat_penalty,
         )
