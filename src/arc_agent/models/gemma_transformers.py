@@ -4,6 +4,8 @@ from typing import Any, Dict, Iterator, List, Optional
 import base64
 import io
 import re
+import sys
+import unicodedata
 from PIL import Image
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
@@ -17,6 +19,7 @@ from langchain_core.messages import (
 )
 from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import ConfigDict, Field
+from ..core.context import ContextBudgetError, compact_context
 
 
 # ---------------------------------------------------------------------------
@@ -30,6 +33,12 @@ _FOREIGN_RATIO_THRESHOLD = 0.10  # lowered from 0.15 → catches 50/231 case soo
 _REPETITION_STREAK_THRESHOLD = 4
 # Truncation word count when repetition detected
 _REPETITION_TRUNCATE_WORDS = 12
+
+
+def _log_llm(message: str) -> None:
+    """Keep diagnostics printable even on legacy Windows output streams."""
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    print(message.encode(encoding, errors="backslashreplace").decode(encoding))
 
 
 def _is_all_whitespace_or_special(text: str) -> bool:
@@ -46,42 +55,59 @@ def _is_all_whitespace_or_special(text: str) -> bool:
 def _rescue_action_from_corrupted_text(text: str) -> str:
     """Last-resort extraction: try to recover a valid ACTION= line from corrupted/partial output.
 
-    Handles cases where the model prefixes the answer with garbage tokens, non-English text,
-    or markdown formatting, but still emits an action keyword somewhere in the response.
+    Accept explicit assignments or standalone choices, never incidental prose mentions.
+    Conflicting choices and incomplete click coordinates must be retried.
     """
     if not text:
         return ""
-    # Search for 'ACTION' keyword across lines, allowing markdown bolding or prefix formatting
-    action_match = re.search(
-        r".*\bACTION\*{0,2}\s*[:=]\s*([A-Za-z0-9_]+)\b(.*)$",
-        text,
-        re.IGNORECASE,
-    )
-    if action_match:
-        name = action_match.group(1).upper()
-        rest = action_match.group(2)
-        coord_m = (
-            re.search(r"\bX\s*[:=]\s*(\d+)\D+Y\s*[:=]\s*(\d+)", rest, re.IGNORECASE)
-            or re.search(r"[(\[]\s*(\d+)\s*[, ]\s*(\d+)\s*[)\]]", rest)
-            or re.search(r"\bX\s*[:=]\s*(\d+)\D+Y\s*[:=]\s*(\d+)", text, re.IGNORECASE)
-            or re.search(r"[(\[]\s*(\d+)\s*[, ]\s*(\d+)\s*[)\]]", text)
+    text = unicodedata.normalize("NFKC", text)
+
+    aliases = {
+        "UP": "ACTION1", "DOWN": "ACTION2", "LEFT": "ACTION3",
+        "RIGHT": "ACTION4", "CLICK": "ACTION6", "UNDO": "ACTION7",
+        "1": "ACTION1", "2": "ACTION2", "3": "ACTION3",
+        "4": "ACTION4", "5": "ACTION5", "6": "ACTION6", "7": "ACTION7",
+        "0": "RESET", "RESET": "RESET", "INTERACT": "ACTION5",
+        "SELECT": "ACTION5", "EXECUTE": "ACTION5", "MOUSE": "ACTION6",
+    }
+    for number in range(1, 8):
+        aliases[f"ACTION{number}"] = f"ACTION{number}"
+        aliases[f"ACTION_{number}"] = f"ACTION{number}"
+
+    choices = set()
+    for line in text.splitlines():
+        action_match = re.search(
+            r"\bACTION\*{0,2}\s*[:=]\s*([A-Za-z0-9_]+)\b(.*)$",
+            line.strip(),
+            re.IGNORECASE,
         )
+        if action_match is None:
+            action_match = re.fullmatch(
+                r"\*{0,2}([A-Za-z0-9_]+)\*{0,2}([ \t]*(?:(?:X\s*[:=].*)|(?:[\[(].*))?)",
+                line.strip(),
+                re.IGNORECASE,
+            )
+        if action_match is None:
+            continue
+        name = aliases.get(action_match.group(1).upper())
+        if name is None:
+            continue
+        rest = action_match.group(2)
+        # Only use coordinates belonging to this choice, not another line's target.
+        coord_m = (
+            re.search(r"\bX\s*[:=]\s*(-?\d+)[ \t,;]+Y\s*[:=]\s*(-?\d+)\b", rest, re.IGNORECASE)
+            or re.search(r"[(\[]\s*(-?\d+)\s*[, ]\s*(-?\d+)\s*[)\]]", rest)
+        )
+        if name == "ACTION6" and (coord_m is None or any(int(c) < 0 for c in coord_m.groups())):
+            return ""
+        choice = f"ACTION={name}"
         if coord_m:
-            return f"ACTION={name} X={coord_m.group(1)} Y={coord_m.group(2)}"
-        return f"ACTION={name}"
-
-    # Secondary check for plain directional action names if surrounded by delimiters
-    for alias, canonical in [
-        ("UP", "ACTION1"), ("DOWN", "ACTION2"), ("LEFT", "ACTION3"),
-        ("RIGHT", "ACTION4"), ("CLICK", "ACTION6"), ("UNDO", "ACTION7"),
-    ]:
-        if re.search(r"\b" + alias + r"\b", text, re.IGNORECASE):
-            return f"ACTION={canonical}"
-
-    return ""
+            choice += f" X={int(coord_m.group(1))} Y={int(coord_m.group(2))}"
+        choices.add(choice)
+    return choices.pop() if len(choices) == 1 else ""
 
 
-def _sanitize_llm_text(text: str) -> str:
+def _sanitize_llm_text(text: str, *, action_response: bool = False) -> str:
     """Sanitizes model output to prevent non-English script drift, repetition loops, and control chars.
 
     Enhanced to:
@@ -92,8 +118,10 @@ def _sanitize_llm_text(text: str) -> str:
     if not text:
         return ""
 
+    # Normalize fullwidth action syntax/digits before removing foreign scripts.
+    normalized = unicodedata.normalize("NFKC", text)
     # 1. Remove non-printable control characters except newline and tab
-    clean = "".join(ch for ch in text if ch in ("\n", "\r", "\t") or (ord(ch) >= 32 and ord(ch) != 127))
+    clean = "".join(ch for ch in normalized if ch in ("\n", "\r", "\t") or (ord(ch) >= 32 and ord(ch) != 127))
 
     # 1b. Remove unicode replacement characters (U+FFFD) — EOS/pad token artefacts
     clean = clean.replace("\ufffd", "")
@@ -111,33 +139,43 @@ def _sanitize_llm_text(text: str) -> str:
             or "\u0400" <= ch <= "\u04ff"  # Cyrillic
             or "\u0600" <= ch <= "\u06ff"  # Arabic
             or "\u0900" <= ch <= "\u097f"  # Devanagari
+            or "\u3000" <= ch <= "\u303f"  # CJK Symbols and Punctuation
+            or "\uff01" <= ch <= "\uffee"  # Halfwidth and Fullwidth Forms
         )
     )
     total_letters = sum(1 for ch in clean if ch.isalpha())
 
     if foreign_chars > 0:
+        _log_llm(f"[LLM SANITIZER] Raw text preview before stripping: {text[:500]!r}")
         ratio = (foreign_chars / total_letters) if total_letters > 0 else 1.0
         if ratio > _FOREIGN_RATIO_THRESHOLD:
-            print(
+            _log_llm(
                 f"⚠️ [LLM SANITIZER] High ratio of non-English/foreign script detected "
                 f"({foreign_chars}/{total_letters}, ratio={ratio:.2f}). Stripping foreign characters."
             )
         # Always strip regardless of ratio to keep output clean
         clean = re.sub(
-            r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff\u0900-\u097f]+",
+            r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff\u0900-\u097f\u3000-\u303f\uff01-\uffee]+",
             "",
             clean,
         )
 
     clean = clean.strip()
 
-    # 3. Last-resort rescue: if output is nearly empty after stripping, try to salvage ACTION= token
-    if len(clean) < _MIN_RESPONSE_CHARS and text:
+    # 3. Rescue corrupted actions even when readable plan fragments remain.
+    # Match the mapper's action syntax, including aliases and markdown bolding.
+    has_action = re.search(
+        r"\bACTION\*{0,2}\s*[:=]\s*([A-Za-z0-9_]+)\b",
+        clean,
+        re.IGNORECASE,
+    ) is not None
+    if action_response and (len(clean) < _MIN_RESPONSE_CHARS or not has_action):
         rescued = _rescue_action_from_corrupted_text(text)
         if rescued:
-            print(f"🔧 [LLM SANITIZER] Rescued ACTION token from corrupted output: {rescued!r}")
+            _log_llm(f"🔧 [LLM SANITIZER] Rescued ACTION token from corrupted output: {rescued!r}")
             return rescued
-        # Still empty — return empty string so caller's retry logic fires
+        return ""  # An ambiguous or missing choice must trigger the caller's retry.
+    if len(clean) < _MIN_RESPONSE_CHARS:
         return ""
 
     # 4. Sanitize against degenerate phrase repetition (e.g. repeated token loops)
@@ -158,21 +196,21 @@ def _sanitize_llm_text(text: str) -> str:
                 truncated = " ".join(head_words)
                 # If the head itself contains an ACTION= line, keep it; otherwise rescue
                 if "ACTION" in truncated.upper():
-                    print(
+                    _log_llm(
                         f"⚠️ [LLM SANITIZER] Detected degenerate repetition streak (x{max_streak}), "
                         f"truncating to first {_REPETITION_TRUNCATE_WORDS} words."
                     )
                     clean = truncated
                 else:
-                    rescued = _rescue_action_from_corrupted_text(clean)
+                    rescued = _rescue_action_from_corrupted_text(clean) if action_response else ""
                     if rescued:
-                        print(
+                        _log_llm(
                             f"⚠️ [LLM SANITIZER] Repetition loop detected (x{max_streak}); "
                             f"rescued ACTION token: {rescued!r}"
                         )
                         clean = rescued
                     else:
-                        print(
+                        _log_llm(
                             f"⚠️ [LLM SANITIZER] Detected degenerate repetition streak (x{max_streak}), "
                             f"truncating."
                         )
@@ -197,17 +235,28 @@ class GemmaTransformersChatModel(BaseChatModel):
     max_context_length: int = Field(default=81930)
     temperature: float = Field(default=0.1)
     top_p: float = Field(default=0.95)
-    repeat_penalty: float = Field(default=1.05)
+    repeat_penalty: float = Field(default=1.0)
+    last_context_usage: Dict[str, Any] = Field(default_factory=dict)
+
+    def _context_limit(self) -> int:
+        limits = [self.max_context_length]
+        config = getattr(self.model, "config", None)
+        text_config = config.get("text_config") if isinstance(config, dict) else getattr(config, "text_config", None)
+        for candidate in (text_config, config):
+            value = candidate.get("max_position_embeddings") if isinstance(candidate, dict) else getattr(candidate, "max_position_embeddings", None)
+            if isinstance(value, int) and value > 0:
+                limits.append(value)
+        return min(limits)
 
     @property
     def _llm_type(self) -> str:
         return "gemma_transformers_chat_model"
 
     def _validate_context_length(self, input_tokens: int, output_tokens: int) -> None:
-        if input_tokens + output_tokens > self.max_context_length:
-            raise ValueError(
+        if input_tokens + output_tokens > self._context_limit():
+            raise ContextBudgetError(
                 f"Context requires {input_tokens} input + {output_tokens} output tokens, "
-                f"exceeding the configured {self.max_context_length}-token maximum. "
+                f"exceeding the effective {self._context_limit()}-token maximum. "
                 "No context was silently truncated."
             )
 
@@ -232,7 +281,7 @@ class GemmaTransformersChatModel(BaseChatModel):
                         elif isinstance(item, dict):
                             item_type = item.get("type", "")
                             if item_type == "text":
-                                content_list.append({"type": "text", "text": item.get("text", "")})
+                                content_list.append(dict(item))
                             elif item_type in ("image_url", "image"):
                                 img_obj = None
                                 if "image" in item and isinstance(item["image"], Image.Image):
@@ -258,26 +307,63 @@ class GemmaTransformersChatModel(BaseChatModel):
                 formatted_messages.append({"role": msg.role, "content": [{"type": "text", "text": str(msg.content)}]})
 
         if system_texts:
-            full_system = "\n\n".join(system_texts)
-            if len(full_system) > 400:
-                short_sys = "You are an expert agent solving ARC-AGI-3 grid reasoning puzzles in English."
-                formatted_messages.insert(0, {"role": "system", "content": [{"type": "text", "text": short_sys}]})
-                user_found = False
-                for m in formatted_messages:
-                    if m["role"] == "user":
-                        for c in m["content"]:
-                            if c.get("type") == "text":
-                                c["text"] = f"[System Instructions]\n{full_system}\n\n[Task]\n{c['text']}"
-                                user_found = True
-                                break
-                        if user_found:
-                            break
-                if not user_found:
-                    formatted_messages.append({"role": "user", "content": [{"type": "text", "text": full_system}]})
-            else:
-                formatted_messages.insert(0, {"role": "system", "content": [{"type": "text", "text": full_system}]})
+            formatted_messages.insert(0, {
+                "role": "system", "content": [{"type": "text", "text": "\n\n".join(system_texts)}],
+            })
 
         return formatted_messages, pil_images
+
+    def _prepare_inputs(self, formatted_messages, pil_images, max_new_tokens):
+        if not hasattr(self.processor, "apply_chat_template"):
+            raise RuntimeError("The model processor must provide its checkpoint's chat template.")
+        if pil_images and getattr(self.processor, "image_processor", None) is None:
+            raise RuntimeError("Images were supplied but the loaded processor cannot process images.")
+        compacted = []
+        while True:
+            prompt_text = self.processor.apply_chat_template(
+                formatted_messages, tokenize=False, add_generation_prompt=True,
+            )
+            processor_kwargs = dict(text=[prompt_text], return_tensors="pt", padding=True,
+                                    add_special_tokens=False)
+            if pil_images:
+                # All images belong to the single conversation in this batch.
+                processor_kwargs["images"] = [pil_images]
+            inputs = self.processor(**processor_kwargs)
+            input_tokens = inputs["input_ids"].shape[-1]
+            if input_tokens + max_new_tokens <= self._context_limit():
+                break
+            removed = compact_context(formatted_messages)
+            if removed is None:
+                self._validate_context_length(input_tokens, max_new_tokens)
+            compacted.append(removed)
+
+        tokenizer = getattr(self.processor, "tokenizer", self.processor)
+        ids = inputs["input_ids"][0].tolist()
+        image_id = getattr(tokenizer, "image_token_id", None)
+        image_tokens = ids.count(image_id) if isinstance(image_id, int) else None
+        if pil_images:
+            if not any(key in inputs for key in ("pixel_values", "pixel_values_images", "image_embeds")):
+                raise RuntimeError("Processor produced no image tensors for the attached images.")
+            if isinstance(image_id, int) and not image_tokens:
+                raise RuntimeError("Processor produced no image token slots for attached images.")
+            counts = []
+            for name in ("boi_token", "eoi_token"):
+                token = getattr(tokenizer, name, None)
+                if isinstance(token, str):
+                    token_id = tokenizer.convert_tokens_to_ids(token)
+                    counts.append(ids.count(token_id))
+            if counts and (min(counts) < len(pil_images) or len(set(counts)) != 1):
+                raise RuntimeError("Image start/end markers do not match the attached images.")
+        self.last_context_usage = {
+            "input_tokens": input_tokens, "image_tokens": image_tokens,
+            "text_and_control_tokens": input_tokens - (image_tokens or 0),
+            "output_reserved": max_new_tokens, "context_limit": self._context_limit(),
+            "images": len(pil_images), "compacted_sections": sorted(set(compacted)),
+        }
+        import os
+        if compacted or os.getenv("DEBUG_LLM_CONTEXT", "false").lower() in ("true", "1"):
+            _log_llm(f"[LLM CONTEXT] {self.last_context_usage}")
+        return inputs
 
     def _generate(
         self,
@@ -293,39 +379,11 @@ class GemmaTransformersChatModel(BaseChatModel):
 
         formatted_messages, pil_images = self._extract_images_and_text(messages)
 
-        if hasattr(self.processor, "apply_chat_template"):
-            prompt_text = self.processor.apply_chat_template(
-                formatted_messages,
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-        else:
-            raise RuntimeError("The model processor must provide its checkpoint's chat template.")
-
-        if pil_images and not hasattr(self.processor, "image_processor"):
-            raise RuntimeError("Images were supplied but the loaded processor cannot process images.")
-
-        if pil_images and hasattr(self.processor, "image_processor"):
-            inputs = self.processor(
-                text=[prompt_text],
-                images=pil_images,
-                return_tensors="pt",
-                padding=True,
-                add_special_tokens=False,
-            )
-        else:
-            inputs = self.processor(
-                text=[prompt_text],
-                return_tensors="pt",
-                padding=True,
-                add_special_tokens=False,
-            )
-
+        max_new_tokens = kwargs.get("max_new_tokens", kwargs.get("max_tokens", 48))
+        inputs = self._prepare_inputs(formatted_messages, pil_images, max_new_tokens)
         target_device = torch.device(self.device if torch.cuda.is_available() else "cpu")
         inputs = {k: v.to(target_device) for k, v in inputs.items()}
 
-        max_new_tokens = kwargs.get("max_new_tokens", kwargs.get("max_tokens", 48))
-        self._validate_context_length(inputs["input_ids"].shape[-1], max_new_tokens)
         temperature = kwargs.get("temperature", self.temperature)
         top_p = kwargs.get("top_p", self.top_p)
         repetition_penalty = kwargs.get("repetition_penalty", self.repeat_penalty)
@@ -424,7 +482,7 @@ class GemmaTransformersChatModel(BaseChatModel):
                     raw_decoded = raw_decoded.split(s)[0].strip()
 
         # Sanitize text (enhanced: detects corruption, rescues ACTION tokens, strips replacement chars)
-        decoded_text = _sanitize_llm_text(raw_decoded)
+        decoded_text = _sanitize_llm_text(raw_decoded, action_response=kwargs.get("action_response", False))
 
         import os
         if (
@@ -433,7 +491,7 @@ class GemmaTransformersChatModel(BaseChatModel):
             or len(decoded_text) == 0
         ):
             preview = repr(raw_decoded[:500]) if raw_decoded else "<EMPTY>"
-            print(f"🔍 [LLM RAW RESPONSE] tokens={len(generated_ids)} | text={preview}")
+            _log_llm(f"🔍 [LLM RAW RESPONSE] tokens={len(generated_ids)} | text={preview}")
 
         message = AIMessage(content=decoded_text)
         return ChatResult(generations=[ChatGeneration(message=message)])
@@ -467,7 +525,13 @@ class MockChatModel(BaseChatModel):
             if "Synthesize a ONE-SHOT plan" in last_text:
                 resp = "ACTION=ACTION1\nACTION=ACTION4\nACTION=ACTION1"
             elif "Legal actions" in last_text or "Next action:" in last_text or "best target coordinates" in last_text:
-                resp = "Plan: Click interactive target.\nACTION=ACTION1"
+                resp = "Plan: Test upward movement.\nExpected effect: Player moves upward.\nACTION=ACTION1"
+            elif "Evaluate the latest action result" in last_text:
+                resp = "Recent findings: Observed the action result.\nOpen questions: Is the goal hypothesis correct?\nPlan: Test an alternative."
+            elif "Analyze the visual change" in last_text:
+                resp = "Recent findings: Compared the before and after boards.\nOpen questions: Does the change advance the goal?"
+            elif "An attempt at this level just ended" in last_text:
+                resp = "FAILURE_REASON: Exploration did not establish the goal.\nRULES:\n- Test an alternative and compare the result."
             elif (
                 "initial visual layout" in last_text
                 or "PROMPT_ASSUME" in last_text

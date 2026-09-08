@@ -109,7 +109,13 @@ def main():
         memory_root=config.agent.memory_root,
         vision_cache_dir=config.agent.vision_cache_dir,
     )
-    runner = ARCRunner(agent=agent, time_budget_hours=config.agent.time_budget_hours)
+    runner = ARCRunner(
+        agent=agent, time_budget_hours=config.agent.time_budget_hours,
+        max_iterations_per_level=config.agent.max_iterations_per_level,
+        max_total_actions=config.agent.max_total_actions_per_game,
+        full_eval_interval=config.agent.full_eval_interval,
+        speculative_plan_max_steps=config.agent.speculative_plan_max_steps,
+    )
 
     # 5. Load Arcade Environment
     try:

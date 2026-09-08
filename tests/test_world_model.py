@@ -121,7 +121,7 @@ def test_brain_chain_with_world_model_injection(tmp_path):
 
 def test_agent_world_model_closed_loop(tmp_path):
     mock_model = MockChatModel(mock_responses=[
-        "World model: Player is cyan token.\nGoal model: Reach magenta portal.\nPlan: Advance towards corridor.",
+        "World model: Player is cyan token.\nGoal model: Reach magenta portal.\nAction model: Test movement.\nRecent findings: Initial board captured.\nPlan: Advance towards corridor.",
         "Plan: Step forward.\nACTION=ACTION1",
         "EXPECTED: Move succeeded.\nRecent findings: Corridor is clear.",
     ])

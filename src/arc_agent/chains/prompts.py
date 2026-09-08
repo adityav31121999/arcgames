@@ -105,6 +105,7 @@ PROMPT_ANALYSE_VISUAL = (
 PROMPT_STATE_DEBUG = (
     "Evaluate the latest action result using the recent action history and pixel changes in English.\n"
     "Separate observed effects from possible causes. A NO-OP does not prove collision, and a change does not prove progress. Treat explanations as hypotheses until tested.\n"
+    "Compare the supplied expected observable effect with the before/after evidence. If no prediction was supplied, say it is unknown.\n"
     "Reply using three labeled lines:\n"
     "Recent findings: <observed effect supported by the transition>\n"
     "Open questions: <uncertain mechanism and a test to distinguish explanations>\n"

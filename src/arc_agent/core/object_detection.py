@@ -4,6 +4,7 @@ from collections import deque
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 import re
 import numpy as np
+from .diff import get_hud_pixels
 
 # Human-readable color names for standard 16 ARC colors
 COLOR_NAMES = {
@@ -52,10 +53,10 @@ def detect_grid_objects(
        This prevents accidental fusion of adjacent, unrelated objects (e.g. player token touching a wall).
     2. Hierarchical containment pass: If component B is fully nested inside component A's bounding box
        (e.g. a bracket containing an inner marker/core), B is merged into A to form a composite object.
-    3. HUD & Background filtering:
-       - Huge monolithic walls/floors (area >= max_area_ratio of grid) are filtered out.
-       - Edge strips flush with outer border margin are flagged as HUD.
-       - Small repeating corner glyphs (<= 8px) are flagged as HUD step/try trackers.
+    3. Role hints:
+       - Large components, edge strips, and corner glyphs remain possible targets.
+       - Their geometry sets possible_hud, which is an unverified role hint.
+       - Only components entirely inside externally verified HUD pixels set is_hud.
 
     Returns a list of dicts for each detected object with:
     - id: int
@@ -233,7 +234,10 @@ def detect_grid_objects(
             in_br = (min_x >= w_grid - 1 - corner_thresh and min_y >= h_grid - 1 - corner_thresh)
             is_corner_hud = in_tl or in_tr or in_bl or in_br
 
-        is_hud = is_large_background or touches_all_borders or is_edge_strip or is_corner_hud
+        verified_hud = get_hud_pixels()
+        is_hud = bool(comp_pixels) and all(p in verified_hud for p in comp_pixels)
+        # Geometry is a hypothesis, never grounds for hiding a possible target.
+        possible_hud = is_large_background or touches_all_borders or is_edge_strip or is_corner_hud
 
         detected.append({
             "id": obj_id,
@@ -247,6 +251,7 @@ def detect_grid_objects(
             "solid_click_point": solid_click_point,
             "shape_desc": shape_desc,
             "is_hud": is_hud,
+            "possible_hud": possible_hud,
         })
         obj_id += 1
 
@@ -259,12 +264,9 @@ def render_detected_objects(grid: Optional[np.ndarray]) -> str:
         return "No visual grid available."
 
     objects = detect_grid_objects(grid)
-    # Filter out HUD trackers (step counter strips, corner markers, large background walls)
+    # Exclude only verified HUD; retain uncertain border and background candidates.
     candidates = [o for o in objects if not o["is_hud"]]
-    if not candidates:
-        candidates = [o for o in objects if o["area"] > 1 and not (o["area"] >= grid.size * 0.25)]
-    if not candidates:
-        candidates = objects
+    candidates.sort(key=lambda o: (o["possible_hud"], o["area"]))
 
     if not candidates:
         return "No distinct foreground objects detected."
@@ -278,6 +280,7 @@ def render_detected_objects(grid: Optional[np.ndarray]) -> str:
             f"- Object #{obj['id']}: {color_str} {obj['shape_desc']} "
             f"(Area: {obj['area']}px, BBox: X=[{min_x}..{max_x}], Y=[{min_y}..{max_y}]) "
             f"-> Center: ACTION=ACTION6 X={cx} Y={cy}"
+            + (" (role uncertain: possible HUD/background)" if obj["possible_hud"] else "")
         )
     return "\n".join(lines)
 

@@ -6,8 +6,8 @@ import time
 
 from ..core.actions import ARCActionMapper
 from ..core.diff import clear_hud_pixels, extract_grid_array, get_grid_difference_text
-from ..core.state import ARCState
-from ..memory.knowledge import maybe_append_rule, update_verified_mechanics
+from ..core.state import ARCState, compute_transition
+from ..memory.knowledge import maybe_append_rule
 from ..utils.display import render_live, reset_live_display
 
 
@@ -79,6 +79,8 @@ class ARCRunner:
         max_total_actions: Optional[int] = None,
         baseline_multiplier: float = 3.0,
         fast_step_eval: bool = False,
+        full_eval_interval: int = 8,
+        speculative_plan_max_steps: int = 25,
     ):
         self.agent = agent
         self.time_budget_hours = time_budget_hours
@@ -86,6 +88,9 @@ class ARCRunner:
         self.max_total_actions = max_total_actions
         self.baseline_multiplier = baseline_multiplier
         self.fast_step_eval = fast_step_eval
+        self.last_stage_status = {}
+        self.full_eval_interval = max(1, full_eval_interval)
+        self.speculative_plan_max_steps = max(0, speculative_plan_max_steps)
         self._total_actions_taken: int = 0
         self._current_game_budget: Optional[int] = max_total_actions
         os.environ["ONLY_RESET_LEVELS"] = "true"
@@ -110,6 +115,8 @@ class ARCRunner:
         max_steps: int,
     ) -> Tuple[ARCState, Optional[ARCState], Any, int, bool]:
         """Attempts speculative one-shot macro plan before falling back to step loop."""
+        if self.speculative_plan_max_steps == 0:
+            return s0_state, None, s0_state.game_state, 0, False
         grid_shape = s0_state.grid.shape if s0_state.grid is not None else None
         world_model_block = self.agent.world_model.to_prompt_block()
         plan_text = self.agent.brain.one_shot_plan(
@@ -126,7 +133,7 @@ class ARCRunner:
         predecessor_of_prior: Optional[ARCState] = None
         initial_completed = s0_state.levels_completed
 
-        max_plan_execution = min(25, len(plan))
+        max_plan_execution = min(self.speculative_plan_max_steps, self.full_eval_interval, len(plan))
         for action, action_data in plan[:max_plan_execution]:
             if is_time_budget_exhausted(self.time_budget_hours):
                 print("⚠️ [TIMEOUT MONITOR] Time budget exhausted during speculative one-shot execution.")
@@ -139,7 +146,9 @@ class ARCRunner:
             if steps_used >= max_steps:
                 break
 
-            if action not in self.agent.memory.get_allowed_actions(prior_state.state_hash, valid_actions):
+            current_actions = (getattr(prior_state.raw_obs, "available_actions", None)
+                               or getattr(env, "action_space", None) or valid_actions)
+            if action not in self.agent.memory.get_allowed_actions(prior_state.state_hash, current_actions):
                 break
 
             steps_used += 1
@@ -172,7 +181,9 @@ class ARCRunner:
                 game_id, level, steps_used, transition.action_sig, prior_state.state_hash, curr_state.state_hash
             )
 
-            if curr_state.levels_completed > initial_completed or self.agent.resolver.is_win(curr_state.game_state):
+            if (curr_state.levels_completed > initial_completed
+                    or self.agent.resolver.is_win(curr_state.game_state)
+                    or self.agent.resolver.is_level_up(curr_state.game_state)):
                 return curr_state, prior_state, curr_state.game_state, steps_used, True
 
             if self.agent.resolver.is_game_over(curr_state.game_state):
@@ -183,12 +194,14 @@ class ARCRunner:
             elif transition.changed is False:
                 zero_diff_streak += 1
 
+            predecessor_of_prior = prior_state
+            prior_state = curr_state
+            if transition.changed is None:
+                # Missing visual evidence requires assessment before another speculative move.
+                break
             if zero_diff_streak >= self.agent.stuck_threshold:
                 print(f"⚠️ Speculative plan hit stuck threshold ({self.agent.stuck_threshold} NOOPs). Falling back to closed loop.")
                 break
-
-            predecessor_of_prior = prior_state
-            prior_state = curr_state
 
         return prior_state, predecessor_of_prior, prior_state.game_state, steps_used, False
 
@@ -213,6 +226,30 @@ class ARCRunner:
         step_count = start_step
         initial_completed = current_state.levels_completed
         visited_hashes = {s0_state.state_hash, current_state.state_hash}
+        evaluation_failed = not getattr(getattr(self.agent.eye, "last_result", None), "ok", True)
+
+        # Evaluate the final speculative transition before Brain selects another move.
+        if (predecessor_state is not None and start_step < max_steps
+                and not self.should_stop_game() and not is_time_budget_exhausted(self.time_budget_hours)):
+            action_sig = self.agent.memory.trajectory[-1].action_sig
+            transition = compute_transition(predecessor_state, current_state, action_sig)
+            diff = get_grid_difference_text(predecessor_state.grid, current_state.grid)
+            visual = self.agent.eye.analyse_visual(game_id, s0_state, transition, diff)
+            debug_note = self.agent.debugger.validate(
+                game_id, level, s0_state, transition, diff, visual, self.agent.cache,
+                intended_plan="Evaluate the final speculative action before replanning.",
+                world_model_block=self.agent.world_model.to_prompt_block(),
+            )
+            evaluation_failed = not visual or not debug_note
+            self.last_stage_status = {
+                "vision": getattr(self.agent.eye, "last_result", None),
+                "debugger": getattr(self.agent.debugger, "last_result", None),
+            }
+            self.agent.world_model.update_from_text(visual)
+            self.agent.world_model.update_from_text(debug_note)
+            maybe_append_rule(game_id, debug_note, False, transition.changed, self.agent.cache)
+            if evaluation_failed:
+                debug_note += "\n[REASSESS] Speculative transition evaluation unavailable; mechanics remain uncertain."
 
         while step_count < max_steps:
             if is_time_budget_exhausted(self.time_budget_hours):
@@ -236,6 +273,7 @@ class ARCRunner:
                 or getattr(env, "action_space", None)
                 or valid_actions
             )
+            self.agent.set_action_space(current_valid_actions)
 
             budget_str = f" | Total {self._total_actions_taken}/{self._current_game_budget}" if self._current_game_budget else f" | Total {self._total_actions_taken}"
             if self._current_game_budget:
@@ -265,6 +303,9 @@ class ARCRunner:
                 )
                 return current_state, current_state.game_state, step_count
 
+            intended_plan = getattr(self.agent, "last_action_plan", "")
+            expected_effect = getattr(self.agent, "last_expected_effect", "")
+            world_model_before = self.agent.world_model.to_prompt_block()
             step_count += 1
             self._total_actions_taken += 1
             action_name = getattr(action, "name", str(action)).upper()
@@ -285,47 +326,51 @@ class ARCRunner:
             visual_analysis = ""
             debug_note = ""
 
+            # Terminal/progress checks precede expensive model evaluation.
+            if next_state.levels_completed > initial_completed or self.agent.resolver.is_terminal(next_state.game_state):
+                self.agent.log_action(game_id, level, step_count, next_transition.action_sig,
+                                      current_state.state_hash, next_state.state_hash)
+                return next_state, next_state.game_state, step_count
+
             fast_mode = self.fast_step_eval or os.getenv("FAST_STEP_EVAL", "false").lower() == "true"
-
-            if next_transition.changed is False:
-                zero_diff_streak += 1
-                if fast_mode:
-                    debug_note = f"[NO-OP] {action_name} had no visible effect on the grid."
-                else:
-                    debug_note = self.agent.debugger.validate(
-                        game_id,
-                        level,
-                        s0_state,
-                        next_transition,
-                        diff,
-                        visual_analysis,
-                        self.agent.cache,
-                        budget_context=budget_context,
-                    )
+            zero_diff_streak = zero_diff_streak + 1 if next_transition.changed is False else 0
+            full_evaluation = (
+                not fast_mode or next_transition.changed is None or evaluation_failed
+                or (next_transition.changed is True and (is_repeat_state or is_repeat_transition))
+                or zero_diff_streak >= self.agent.stuck_threshold
+                or step_count % self.full_eval_interval == 0
+            )
+            observation = (
+                "No visible board change detected; cause unknown." if next_transition.changed is False
+                else f"Board changed: {diff}; goal progress unknown." if next_transition.changed is True
+                else "Before/after comparison unavailable; effect unknown."
+            )
+            if full_evaluation:
+                visual_analysis = self.agent.eye.analyse_visual(game_id, s0_state, next_transition, diff)
+                debug_note = self.agent.debugger.validate(
+                    game_id, level, s0_state, next_transition, diff, visual_analysis,
+                    self.agent.cache, budget_context=budget_context,
+                    intended_plan=intended_plan, expected_effect=expected_effect,
+                    world_model_block=world_model_before,
+                )
+                evaluation_failed = not visual_analysis or not debug_note
+                self.last_stage_status = {
+                    "vision": getattr(self.agent.eye, "last_result", None),
+                    "debugger": getattr(self.agent.debugger, "last_result", None),
+                }
             else:
-                zero_diff_streak = 0
-                if fast_mode and not is_repeat_state and zero_diff_streak < self.agent.stuck_threshold:
-                    visual_analysis = f"Changed grid: {diff}"
-                    debug_note = f"[CHANGE] {action_name} altered board: {diff}"
-                else:
-                    render_live(next_state, status=f"👁️ Step {step_count}/{max_steps} (Try {iteration}/{max_iterations}) — Running visual analysis...")
-                    visual_analysis = self.agent.eye.analyse_visual(game_id, s0_state, next_transition, diff)
-                    debug_note = self.agent.debugger.validate(
-                        game_id,
-                        level,
-                        s0_state,
-                        next_transition,
-                        diff,
-                        visual_analysis,
-                        self.agent.cache,
-                        budget_context=budget_context,
-                    )
+                debug_note = f"Recent findings: {observation}"
 
+            # Only validated stage text enters beliefs. On failure retain measured facts.
             if visual_analysis:
-                self.agent.world_model.recent_findings = visual_analysis
                 self.agent.world_model.update_from_text(visual_analysis)
             if debug_note:
                 self.agent.world_model.update_from_text(debug_note)
+            else:
+                debug_note = f"Recent findings: {observation}"
+                self.agent.world_model.update_from_text(debug_note)
+            if evaluation_failed:
+                debug_note += "\n[REASSESS] Visual evaluation unavailable; treat mechanics as uncertain and re-evaluate next step."
 
             is_visited_loop = next_state.state_hash in visited_hashes
             visited_hashes.add(next_state.state_hash)
@@ -397,27 +442,29 @@ class ARCRunner:
                 self.agent.cache.append_action_log(game_id, level, f"\n### --- RETRY ITERATION {iteration} (Try {iteration}/{iterations_limit}) ---\n")
 
             s0_state = self.agent.enter_level(
-                game_id, level, curr_obs, is_first_level_of_game, valid_actions
+                game_id, level, curr_obs, is_first_level_of_game and iteration == 1, valid_actions
             )
 
             curr_state, predecessor_state, state, steps_used, solved = self.attempt_one_shot(
                 game_id, level, env, s0_state, valid_actions, max_steps
             )
             if solved:
-                return curr_state.raw_obs, state, steps_used
+                return curr_state.raw_obs, state, total_steps + steps_used
 
             if self.should_stop_game():
                 print(f"⛔ [BUDGET] Stopping Level {level} after one-shot: action budget ({self._total_actions_taken}/{self._current_game_budget}) reached.")
                 final_state = curr_state
+                total_steps += steps_used
                 break
 
             if self.agent.resolver.is_game_over(state):
                 if iteration < iterations_limit:
                     self.agent.review_failed_iteration(game_id, level, iteration, s0_state, curr_state)
                 final_state = curr_state
+                total_steps += steps_used
                 continue
 
-            final_state, state, total_steps = self.run_step_loop(
+            final_state, state, attempt_steps = self.run_step_loop(
                 game_id,
                 level,
                 env,
@@ -430,8 +477,10 @@ class ARCRunner:
                 iteration=iteration,
                 max_iterations=iterations_limit,
             )
+            total_steps += attempt_steps
 
-            if self.agent.resolver.is_win(state) or self.agent.resolver.is_level_up(state):
+            if (final_state.levels_completed > s0_state.levels_completed
+                    or self.agent.resolver.is_win(state) or self.agent.resolver.is_level_up(state)):
                 return final_state.raw_obs, state, total_steps
 
             if self.should_stop_game():

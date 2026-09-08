@@ -71,14 +71,15 @@ def test_detect_grid_objects_bracket_and_hollow_center():
     objects = detect_grid_objects(grid)
     assert len(objects) == 2
 
-    # Verify HUD filtering
+    # Border location alone cannot establish that the red object is HUD.
     hud_objs = [o for o in objects if o["is_hud"]]
     game_objs = [o for o in objects if not o["is_hud"]]
-    assert len(hud_objs) == 1
-    assert hud_objs[0]["bbox"] == (1, 1, 2, 2)
+    assert not hud_objs
+    border = next(o for o in objects if o["bbox"] == (1, 1, 2, 2))
+    assert border["possible_hud"] is True
 
-    assert len(game_objs) == 1
-    bracket = game_objs[0]
+    assert len(game_objs) == 2
+    bracket = next(o for o in game_objs if o["bbox"] == (30, 20, 36, 26))
     assert bracket["bbox"] == (30, 20, 36, 26)
     assert bracket["visual_center"] == (33, 23)
 
@@ -222,14 +223,16 @@ def test_massive_background_wall_filtering():
 
     objects = detect_grid_objects(grid)
     wall = next(o for o in objects if 3 in o["colors"])
-    assert wall["is_hud"] is True  # Flagged as background structure
+    assert wall["is_hud"] is False
+    assert wall["possible_hud"] is True
 
     bracket = next(o for o in objects if 9 in o["colors"])
     assert bracket["is_hud"] is False  # Legitimate game object
 
     rendered = render_detected_objects(grid)
     assert "Color 9" in rendered or "Blue" in rendered
-    assert "Dark Gray" not in rendered  # Wall excluded from prompt candidates!
+    assert "Dark Gray" in rendered  # Keep possible interactive structures visible.
+    assert "role uncertain" in rendered
 
 
 def test_render_click_history_schema_robustness():
@@ -254,8 +257,8 @@ def test_render_click_history_schema_robustness():
     assert "Clicked (X=11, Y=9)" in res2
 
 
-def test_system_prompt_gemma4_moe_cap():
-    """Verify that long system prompts are kept <400 chars in role:system and prepended to user turn."""
+def test_system_prompt_preserves_native_role():
+    """The checkpoint template receives full system instructions in their native role."""
     from langchain_core.messages import HumanMessage, SystemMessage
     from arc_agent.models.gemma_transformers import GemmaTransformersChatModel
 
@@ -266,15 +269,14 @@ def test_system_prompt_gemma4_moe_cap():
         HumanMessage(content="Decide next action."),
     ]
     formatted, _ = chat_model._extract_images_and_text(messages)
-    # The role: system content must be short (<150 chars) to prevent Gemma 4 MoE empty output bug
     sys_turn = next(m for m in formatted if m["role"] == "system")
     sys_text = sys_turn["content"][0]["text"]
-    assert len(sys_text) < 150
+    assert sys_text == long_system
 
-    # The full guidelines must be retained in the user turn
+    # Do not duplicate system instructions into the task.
     user_turn = next(m for m in formatted if m["role"] == "user")
     user_text = user_turn["content"][0]["text"]
-    assert long_system in user_text
+    assert long_system not in user_text
     assert "Decide next action." in user_text
 
 

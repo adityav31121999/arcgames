@@ -3,6 +3,7 @@
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from ..core.context import context_part
 
 
 def scratchpad_path(game_id: str, memory_root: str | Path = "./agent_memory") -> Path:
@@ -104,6 +105,33 @@ class KnowledgeCache:
         if key not in self._actions:
             self._actions[key] = read_text(actions_log_path(game_id, level, self.memory_root))
         return tail_text(self._actions[key], max_chars)
+
+    def context_sections(self, game_id: str, level: Optional[int] = None,
+                         include_prior: bool = False) -> list[dict]:
+        """Keep memory sections intact; the model wrapper applies the actual token budget.
+
+        Findings are prepended inside their sections, while logs/reviews are appended.
+        Preserve that ordering explicitly instead of taking a character tail.
+        """
+        sections = []
+        chunks = re.split(r"(?m)^(?=## )", self.scratch(game_id))
+        for chunk in chunks:
+            if not chunk.strip():
+                continue
+            label, _, body = chunk.partition("\n")
+            heading = label.lstrip("# ")
+            priority = 0 if heading in ("OBJECTIVE", "VERIFIED MECHANICS AND RULES") else 2
+            keep = "head" if heading in ("HYPOTHESES & ASSUMPTIONS", "OBSERVATIONS", "VERIFIED MECHANICS AND RULES") else "tail"
+            sections.append(context_part(heading, body, priority, keep))
+        if level is not None:
+            sections.append(context_part("Recent Actions", self.actions_log(game_id, level), 4))
+        if include_prior:
+            sections.append(context_part("Prior Level Analyses", self.ostate(game_id), 5))
+        return sections
+
+    def archive(self, game_id: str, label: str, text: str) -> None:
+        """Retain full updates even when the working scratchpad consolidates entries."""
+        append_text(self.memory_root / str(game_id) / "memory_history.md", f"## {label}\n{text}")
 
     def append_action_log(self, game_id: str, level: int, text: str) -> None:
         key = (game_id, level)
@@ -222,13 +250,22 @@ def _write_scratch_section(
         if entry.strip() in our_body:
             return
 
+        cache.archive(game_id, header.lstrip("# "), entry_text)
+
         # Prepend new entry (most recent first) and cap bullet count
-        existing_bullets = [ln for ln in our_body.splitlines(keepends=True) if ln.strip().startswith("-")]
+        # Keep complete entries, including multiline findings/questions/plans.
+        existing_bullets = [block for block in re.split(r"(?m)^(?=- )", our_body)
+                            if block.lstrip().startswith("- ")]
         kept = existing_bullets[: max(0, max_entries - 1)]  # keep room for new entry
+        evicted = existing_bullets[len(kept):]
+        if evicted:
+            # Also preserve entries loaded from scratchpads created before archiving existed.
+            cache.archive(game_id, "Consolidated " + header.lstrip("# "), "".join(evicted))
         new_body = entry + "".join(kept)
         updated = parts[0] + header + "\n" + new_body.strip() + "\n" + trailing
         cache.write_scratch(game_id, updated)
     else:
+        cache.archive(game_id, header.lstrip("# "), entry_text)
         cache.append_scratch(game_id, f"\n{header}\n{entry}")
 
 
@@ -240,11 +277,10 @@ def maybe_append_rule(
     cache: KnowledgeCache,
 ) -> None:
     """Keep model interpretations as hypotheses; a verdict is not verification."""
-    if not debugger_verdict or is_repeat or "INFERENCE FAILED" in debugger_verdict:
+    if not debugger_verdict or "INFERENCE FAILED" in debugger_verdict:
         return
     # Suppress HUD step counter noise — never write these to scratchpad
-    if _is_hud_noise(debugger_verdict):
-        return
+    # Location alone is not evidence of HUD; retain small border interactions.
     observation = (
         "No visible gameplay change detected; cause unknown." if changed is False
         else "Visible gameplay change detected; goal progress unknown." if changed is True
@@ -266,6 +302,7 @@ def apply_iteration_review(
     """Stores review hypotheses and failure notes without promoting model claims to facts."""
     if not review_text or "[REVIEW INFERENCE FAILED" in review_text:
         return
+    cache.archive(game_id, f"Review level {level}, iteration {iteration}", review_text)
 
     failure_reason = ""
     rules: List[str] = []

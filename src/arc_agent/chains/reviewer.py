@@ -1,10 +1,10 @@
 """Post-iteration meta-reflection and failure analysis chain."""
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..core.state import ARCState
 from ..memory.knowledge import KnowledgeCache
+from .inference import StageResult, invoke_stage
 from .prompts import PROMPT_ITERATION_REVIEW, SYSTEM_PROMPT
 
 
@@ -15,6 +15,7 @@ class ReviewerChain:
         self.model = model
         self.max_tokens = max_tokens
         self.system_prompt = system_prompt
+        self.last_result = StageResult(False, error="Not run")
 
     def set_system_prompt(self, system_prompt: str) -> None:
         """Updates the system prompt for dynamic action spaces."""
@@ -29,8 +30,6 @@ class ReviewerChain:
         final_state: ARCState,
         cache: KnowledgeCache,
     ) -> str:
-        full_actions = cache.actions_log(game_id, level)
-        full_scratch = cache.scratch(game_id)
         final_state_name = getattr(final_state.game_state, "name", str(final_state.game_state))
 
         prompt = f"""{PROMPT_ITERATION_REVIEW}
@@ -38,23 +37,12 @@ class ReviewerChain:
 Iteration: {iteration}
 Final game state reached: {final_state_name}
 
-Full Actions Log for this level (all iterations so far):
-{full_actions}
+Review the attached initial/final boards and memory context. Distinguish hypotheses from evidence."""
 
-Current Knowledge Store (scratchpad, untruncated):
-{full_scratch}"""
-
-        messages = [
-            SystemMessage(content=self.system_prompt),
-            HumanMessage(content=prompt),
-        ]
-
-        try:
-            response = self.model.invoke(
-                messages,
-                temperature=0.35,
-                max_tokens=self.max_tokens,
-            )
-            return str(response.content).strip()
-        except Exception as e:
-            return f"[REVIEW INFERENCE FAILED: {type(e).__name__}: {e}]"
+        self.last_result = invoke_stage(
+            self.model, self.system_prompt, prompt, stage="Reviewer", max_tokens=self.max_tokens,
+            images=[("Initial board", s0_state.get_pil_image()), ("Final board", final_state.get_pil_image())],
+            context=cache.context_sections(game_id, level),
+            required_labels=("FAILURE_REASON", "RULES"), temperature=0.35,
+        )
+        return self.last_result.text

@@ -393,6 +393,11 @@ class ModelFactory:
                     raise RuntimeError(f"Could not load processor or tokenizer from local model '{model_id}': {e2} / {e3}")
 
         # 5. Multi-tier model loading with fallbacks
+        if getattr(processor, "image_processor", None) is None:
+            raise RuntimeError("The agent requires a multimodal AutoProcessor; a tokenizer-only fallback cannot process board images.")
+        if not getattr(processor, "chat_template", None):
+            raise RuntimeError("The checkpoint is missing its multimodal chat template.")
+
         model = None
         load_kwargs = {
             "torch_dtype": torch_dtype,

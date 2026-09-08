@@ -1,5 +1,42 @@
 # ARC-AGI-3 LangChain Inference Agent
 
+## Reliability and context handling
+
+Board arrays are rendered to PIL images and passed to the checkpoint's multimodal
+processor with the text prompt. The native chat template inserts image placeholders;
+the processor supplies image start/end markers, image token slots, and pixel tensors
+for the vision model. Vision and Debugger receive both the previous and current board
+for transition evaluation. Debugger also receives Brain's intended plan and expected
+observable effect.
+
+The wrapper counts the processor-expanded input tokens, including image slots, and
+reserves generation tokens before moving inputs to the GPU. It uses the smaller of
+`model.max_context_length` and the loaded model's supported context size. When needed,
+it compacts optional memory/history sections by priority and recency. Required task
+instructions, native system messages, and images are preserved. If those alone do
+not fit, inference returns an explicit context-budget error. Working memory keeps
+recent entries; consolidated updates remain in `memory_history.md` alongside the
+action logs and level analyses.
+
+Set `DEBUG_LLM_CONTEXT=true` to print input tokens, image slots, output reservation,
+effective context limit, and compacted sections. The same data is available in
+`GemmaTransformersChatModel.last_context_usage`. Token capacity does not guarantee
+that a particular prompt and image count fit GPU memory.
+
+Fast evaluation uses measured board differences, with full Vision/Debugger evaluation
+on stalled, repeated, or uncertain transitions, after a failed evaluation, and every
+`agent.full_eval_interval` steps (default 8). Speculative execution is capped at this
+interval and hands off for evaluation before Brain replans. Set
+`agent.speculative_plan_max_steps=0` to disable speculative planning. Malformed
+Vision/Debugger/Reviewer responses receive one retry; their `last_result` reports
+failure separately from world-model facts. Only externally verified HUD coordinates
+are masked, so border movement and uncertain border targets remain visible.
+
+Generation defaults to `repeat_penalty=1.0`. Brain requests an explicit
+`[END_ACTION]` marker so a blank line does not cut off its action. The sanitizer
+rescues explicit actions across lines and only applies action rescue to action
+responses. See [the repair plan](repair_plan.md) for validation and runtime checks.
+
 An agentic reasoning framework for **ARC-AGI-3** (ARC Prize 2026), powered by **LangChain** and **Hugging Face `transformers`**, specifically optimized for **NVIDIA RTX PRO 6000 (96 GB VRAM)** running **[`nvidia/Gemma-4-26B-A4B-NVFP4`](https://huggingface.co/nvidia/Gemma-4-26B-A4B-NVFP4)** (and Gemma 4 MoE architectures).
 
 ---

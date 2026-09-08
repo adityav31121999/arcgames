@@ -26,10 +26,10 @@ class ModelConfig(BaseModel):
     trust_remote_code: bool = Field(default=True)
     temperature: float = Field(default=0.0)
     top_p: float = Field(default=0.95)
-    repeat_penalty: float = Field(default=1.05)
+    repeat_penalty: float = Field(default=1.0)
     max_new_tokens_eye: int = Field(default=256)
     max_new_tokens_debug: int = Field(default=96)
-    max_new_tokens_brain: int = Field(default=32)
+    max_new_tokens_brain: int = Field(default=128)
     max_new_tokens_review: int = Field(default=256)
 
 
@@ -39,6 +39,7 @@ class AgentConfig(BaseModel):
     max_iterations_per_level: int = Field(default=3, description="Retry iterations (lives) per level")
     max_levels_per_game: int = Field(default=10)
     speculative_plan_max_steps: int = Field(default=15)
+    full_eval_interval: int = Field(default=8, ge=1, description="Maximum fast-mode steps between full visual evaluations")
     time_budget_hours: float = Field(default=8.5)
     memory_root: str = Field(default="./agent_memory")
     vision_cache_dir: str = Field(default="/tmp/agent_vision")

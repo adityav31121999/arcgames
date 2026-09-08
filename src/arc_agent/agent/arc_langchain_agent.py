@@ -18,6 +18,7 @@ from ..core.object_detection import (
 )
 from ..core.resolver import GameStateResolver
 from ..core.state import ARCState, ARCTransition, compute_transition, save_step_state_json
+from ..core.diff import clear_hud_pixels
 from ..memory.knowledge import (
     KnowledgeCache,
     apply_iteration_review,
@@ -56,6 +57,8 @@ class ARCLangChainAgent:
         self.cache = KnowledgeCache(memory_root=memory_root)
         self.world_model = WorldModel()
         self.consecutive_parse_failures: int = 0
+        self.last_action_plan = ""
+        self.last_expected_effect = ""
 
     def set_action_space(self, action_space: Optional[Any]) -> None:
         """Dynamically builds and sets system prompts across all chains matching the actual action space."""
@@ -82,6 +85,7 @@ class ARCLangChainAgent:
         valid_actions: Optional[List[Any]] = None,
     ) -> ARCState:
         """Initializes state, memory, and performs initial visual analysis of S0."""
+        clear_hud_pixels()
         if valid_actions:
             self.set_action_space(valid_actions)
         init_knowledge_files(game_id, level, valid_actions, memory_root=self.memory_root)
@@ -159,6 +163,8 @@ class ARCLangChainAgent:
     ) -> Tuple[Any, Dict[str, Any], str]:
         """Decides next action using Brain chain with formatting retries and heuristics fallbacks."""
         grid_shape = current_state.grid.shape if current_state.grid is not None else None
+        self.last_action_plan = ""
+        self.last_expected_effect = ""
         state_hash = current_state.state_hash
 
         allowed_actions = self.memory.get_allowed_actions(state_hash, valid_actions)
@@ -196,10 +202,9 @@ class ARCLangChainAgent:
             object_list=object_list,
             click_history=click_history,
         )
-        if raw:
-            self.world_model.update_from_text(raw)
         action, action_data = ARCActionMapper.parse(raw, allowed_actions, grid_shape, prohibited=prohibited)
         if action is not None:
+            self._record_action_intent(raw)
             self.consecutive_parse_failures = 0
             return action, action_data, context_note
 
@@ -223,10 +228,9 @@ class ARCLangChainAgent:
             object_list=object_list,
             click_history=click_history,
         )
-        if raw_retry:
-            self.world_model.update_from_text(raw_retry)
         action, action_data = ARCActionMapper.parse(raw_retry, allowed_actions, grid_shape, prohibited=prohibited)
         if action is not None:
+            self._record_action_intent(raw_retry)
             self.consecutive_parse_failures = 0
             return action, action_data, context_note
 
@@ -246,6 +250,13 @@ class ARCLangChainAgent:
 
         return self._safe_fallback(allowed_actions, state_hash, grid_shape, context_note, current_grid=current_state.grid)
 
+    def _record_action_intent(self, text: str) -> None:
+        intent = WorldModel()
+        intent.update_from_text(text)
+        self.last_action_plan = intent.current_plan
+        self.last_expected_effect = intent.expected_effect
+        self.world_model.update_from_text(text)
+
     def _safe_fallback(
         self,
         allowed_actions: List[Any],
@@ -258,7 +269,8 @@ class ARCLangChainAgent:
         # 1. If click-only game, target detected unclicked objects before blind coordinate search
         if is_click_only(allowed_actions) and current_grid is not None:
             detected = detect_grid_objects(current_grid)
-            candidates = [o for o in detected if not o["is_hud"]] or detected
+            candidates = sorted((o for o in detected if not o["is_hud"]),
+                                key=lambda o: (o["possible_hud"], o["area"]))
             tried_coords = set(self.memory.tried_coords_for_action(state_hash, "ACTION6"))
             for obj in candidates:
                 cx, cy = obj["solid_click_point"]

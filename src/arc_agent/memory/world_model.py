@@ -12,6 +12,7 @@ _LABELS = [
     "Recent findings",
     "Open questions",
     "Plan",
+    "Expected effect",
     "Cross-level notes",
 ]
 
@@ -65,6 +66,7 @@ _FIELD_KEY_MAP = {
     "recent_findings": "recent_findings",
     "open_questions": "open_questions",
     "plan": "current_plan",
+    "expected_effect": "expected_effect",
     "current_plan": "current_plan",
     "cross_level_notes": "cross_level_notes",
     "cross-level_notes": "cross_level_notes",
@@ -81,6 +83,7 @@ class WorldModel:
     recent_findings: str = ""
     open_questions: str = ""
     current_plan: str = ""
+    expected_effect: str = ""
     cross_level_notes: str = ""
 
     @property
@@ -93,7 +96,7 @@ class WorldModel:
 
     def update_from_text(self, text: str) -> None:
         """Parse labeled sections from any LLM or feedback text and merge non-empty values."""
-        if not text or not text.strip():
+        if not text or not text.strip() or "INFERENCE FAILED" in text:
             return
         extracted = _extract_labeled_blocks(text, _LABELS)
         for key, value in extracted.items():
@@ -111,6 +114,7 @@ class WorldModel:
         self.recent_findings = ""
         self.open_questions = ""
         self.current_plan = ""
+        self.expected_effect = ""
 
     def is_empty(self) -> bool:
         return not any([
