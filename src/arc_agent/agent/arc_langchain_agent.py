@@ -230,8 +230,15 @@ class ARCLangChainAgent:
             self.consecutive_parse_failures = 0
             return action, action_data, context_note
 
-        self.consecutive_parse_failures += 1
-        if self.consecutive_parse_failures >= 3:
+        # Distinguish syntactically valid output (e.g. valid action that was prohibited)
+        # from genuine LLM corruption / empty response
+        raw_valid_syntax, _ = ARCActionMapper.parse(raw_retry or raw, allowed_actions, grid_shape, prohibited=None)
+        if raw_valid_syntax is not None:
+            self.consecutive_parse_failures = 0
+        else:
+            self.consecutive_parse_failures += 1
+
+        if self.consecutive_parse_failures >= 6:
             print(
                 f"\n🚨 [CRITICAL LLM FAILURE] Model produced {self.consecutive_parse_failures} consecutive empty or unparseable responses! "
                 "The LLM is unresponsive or outputting corrupted tokens."

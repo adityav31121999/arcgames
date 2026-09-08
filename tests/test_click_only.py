@@ -279,7 +279,7 @@ def test_system_prompt_gemma4_moe_cap():
 
 
 def test_runner_halts_on_consecutive_llm_failures(tmp_path):
-    """Verify runner immediately halts if LLM produces 3 consecutive unparseable outputs."""
+    """Verify runner immediately halts if LLM produces 6 consecutive unparseable outputs."""
     from tests.test_runner_budget import _build_test_agent, DummyEnvWithInfo
     from arc_agent.agent.runner import ARCRunner
 
@@ -294,9 +294,8 @@ def test_runner_halts_on_consecutive_llm_failures(tmp_path):
         game_id="halt_test",
         env=env,
         max_levels=1,
-        max_steps_per_level=10,
+        max_steps_per_level=20,
     )
-    # Should halt at 3 failures, not drain the full 10 steps
-    assert agent.consecutive_parse_failures >= 3
-    assert runner.total_actions_taken <= 4
-
+    # Should halt at 6 failures, not drain the full 20 steps
+    assert agent.consecutive_parse_failures >= 6
+    assert runner.total_actions_taken <= 9

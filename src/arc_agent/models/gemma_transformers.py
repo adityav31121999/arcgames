@@ -19,16 +19,88 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import ConfigDict, Field
 
 
+# ---------------------------------------------------------------------------
+# Token corruption / degeneration constants
+# ---------------------------------------------------------------------------
+# Minimum ASCII printable chars to consider a response non-empty after stripping
+_MIN_RESPONSE_CHARS = 3
+# Foreign script ratio above which we strip and attempt rescue
+_FOREIGN_RATIO_THRESHOLD = 0.10  # lowered from 0.15 → catches 50/231 case sooner
+# Repetition streak length that triggers truncation
+_REPETITION_STREAK_THRESHOLD = 4
+# Truncation word count when repetition detected
+_REPETITION_TRUNCATE_WORDS = 12
+
+
+def _is_all_whitespace_or_special(text: str) -> bool:
+    """Returns True if text is empty, all whitespace, or only special/punctuation chars."""
+    stripped = text.strip()
+    if not stripped:
+        return True
+    # Only punctuation / symbols left after stripping letters and digits
+    if not any(ch.isalnum() for ch in stripped):
+        return True
+    return False
+
+
+def _rescue_action_from_corrupted_text(text: str) -> str:
+    """Last-resort extraction: try to recover a valid ACTION= line from corrupted/partial output.
+
+    Handles cases where the model prefixes the answer with garbage tokens, non-English text,
+    or markdown formatting, but still emits an action keyword somewhere in the response.
+    """
+    if not text:
+        return ""
+    # Search for 'ACTION' keyword across lines, allowing markdown bolding or prefix formatting
+    action_match = re.search(
+        r".*\bACTION\*{0,2}\s*[:=]\s*([A-Za-z0-9_]+)\b(.*)$",
+        text,
+        re.IGNORECASE,
+    )
+    if action_match:
+        name = action_match.group(1).upper()
+        rest = action_match.group(2)
+        coord_m = (
+            re.search(r"\bX\s*[:=]\s*(\d+)\D+Y\s*[:=]\s*(\d+)", rest, re.IGNORECASE)
+            or re.search(r"[(\[]\s*(\d+)\s*[, ]\s*(\d+)\s*[)\]]", rest)
+            or re.search(r"\bX\s*[:=]\s*(\d+)\D+Y\s*[:=]\s*(\d+)", text, re.IGNORECASE)
+            or re.search(r"[(\[]\s*(\d+)\s*[, ]\s*(\d+)\s*[)\]]", text)
+        )
+        if coord_m:
+            return f"ACTION={name} X={coord_m.group(1)} Y={coord_m.group(2)}"
+        return f"ACTION={name}"
+
+    # Secondary check for plain directional action names if surrounded by delimiters
+    for alias, canonical in [
+        ("UP", "ACTION1"), ("DOWN", "ACTION2"), ("LEFT", "ACTION3"),
+        ("RIGHT", "ACTION4"), ("CLICK", "ACTION6"), ("UNDO", "ACTION7"),
+    ]:
+        if re.search(r"\b" + alias + r"\b", text, re.IGNORECASE):
+            return f"ACTION={canonical}"
+
+    return ""
+
+
 def _sanitize_llm_text(text: str) -> str:
-    """Sanitizes model output to prevent non-English script drift, repetition loops, and control chars."""
+    """Sanitizes model output to prevent non-English script drift, repetition loops, and control chars.
+
+    Enhanced to:
+    - Apply a lower foreign script ratio threshold (0.10 vs old 0.15) to catch marginal cases.
+    - Attempt last-resort ACTION= rescue from corrupted output before discarding.
+    - Explicitly handle EOS / padding token artefacts that appear as unicode replacement chars.
+    """
     if not text:
         return ""
 
     # 1. Remove non-printable control characters except newline and tab
     clean = "".join(ch for ch in text if ch in ("\n", "\r", "\t") or (ord(ch) >= 32 and ord(ch) != 127))
 
+    # 1b. Remove unicode replacement characters (U+FFFD) — EOS/pad token artefacts
+    clean = clean.replace("\ufffd", "")
+    # Also remove null bytes that some decoders emit for pad tokens
+    clean = clean.replace("\x00", "")
+
     # 2. Check for non-Latin / non-ASCII foreign script flooding (CJK, Cyrillic, Arabic, Hangul, etc.)
-    # Count characters in foreign script unicode blocks
     foreign_chars = sum(
         1
         for ch in clean
@@ -43,18 +115,32 @@ def _sanitize_llm_text(text: str) -> str:
     )
     total_letters = sum(1 for ch in clean if ch.isalpha())
 
-    # If foreign script dominates or is mixed into output, filter or reject it
     if foreign_chars > 0:
-        if total_letters > 0 and (foreign_chars / total_letters) > 0.15:
-            print(f"⚠️ [LLM SANITIZER] High ratio of non-English/foreign script detected ({foreign_chars}/{total_letters}). Stripping foreign characters.")
-            # Strip non-ASCII/foreign characters
-            clean = re.sub(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff\u0900-\u097f]+", "", clean)
-        else:
-            clean = re.sub(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff\u0900-\u097f]+", "", clean)
+        ratio = (foreign_chars / total_letters) if total_letters > 0 else 1.0
+        if ratio > _FOREIGN_RATIO_THRESHOLD:
+            print(
+                f"⚠️ [LLM SANITIZER] High ratio of non-English/foreign script detected "
+                f"({foreign_chars}/{total_letters}, ratio={ratio:.2f}). Stripping foreign characters."
+            )
+        # Always strip regardless of ratio to keep output clean
+        clean = re.sub(
+            r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff\u0900-\u097f]+",
+            "",
+            clean,
+        )
 
     clean = clean.strip()
 
-    # 3. Sanitize against degenerate phrase repetition (e.g. repeated token loops)
+    # 3. Last-resort rescue: if output is nearly empty after stripping, try to salvage ACTION= token
+    if len(clean) < _MIN_RESPONSE_CHARS and text:
+        rescued = _rescue_action_from_corrupted_text(text)
+        if rescued:
+            print(f"🔧 [LLM SANITIZER] Rescued ACTION token from corrupted output: {rescued!r}")
+            return rescued
+        # Still empty — return empty string so caller's retry logic fires
+        return ""
+
+    # 4. Sanitize against degenerate phrase repetition (e.g. repeated token loops)
     words = clean.split()
     if len(words) > 8:
         for phrase_len in (1, 2, 3, 4):
@@ -66,9 +152,31 @@ def _sanitize_llm_text(text: str) -> str:
                     max_streak = max(max_streak, repeated_streak)
                 else:
                     repeated_streak = 0
-            if max_streak >= 4:
-                print(f"⚠️ [LLM SANITIZER] Detected degenerate repetition streak (x{max_streak}), truncating.")
-                clean = " ".join(words[:12])
+            if max_streak >= _REPETITION_STREAK_THRESHOLD:
+                # Attempt to rescue the head of the text before repetition kicks in
+                head_words = words[:_REPETITION_TRUNCATE_WORDS]
+                truncated = " ".join(head_words)
+                # If the head itself contains an ACTION= line, keep it; otherwise rescue
+                if "ACTION" in truncated.upper():
+                    print(
+                        f"⚠️ [LLM SANITIZER] Detected degenerate repetition streak (x{max_streak}), "
+                        f"truncating to first {_REPETITION_TRUNCATE_WORDS} words."
+                    )
+                    clean = truncated
+                else:
+                    rescued = _rescue_action_from_corrupted_text(clean)
+                    if rescued:
+                        print(
+                            f"⚠️ [LLM SANITIZER] Repetition loop detected (x{max_streak}); "
+                            f"rescued ACTION token: {rescued!r}"
+                        )
+                        clean = rescued
+                    else:
+                        print(
+                            f"⚠️ [LLM SANITIZER] Detected degenerate repetition streak (x{max_streak}), "
+                            f"truncating."
+                        )
+                        clean = truncated
                 break
 
     return clean.strip()
@@ -287,7 +395,9 @@ class GemmaTransformersChatModel(BaseChatModel):
                 generate_kwargs["do_sample"] = False
 
             output_ids = None
-            if not pil_images:
+            import os
+            enable_lookup = os.getenv("ENABLE_PROMPT_LOOKUP", "false").lower() in ("true", "1")
+            if not pil_images and enable_lookup:
                 try:
                     fast_kwargs = dict(generate_kwargs)
                     fast_kwargs["prompt_lookup_num_tokens"] = 3
@@ -313,7 +423,7 @@ class GemmaTransformersChatModel(BaseChatModel):
                 if s in raw_decoded:
                     raw_decoded = raw_decoded.split(s)[0].strip()
 
-        # Sanitize text
+        # Sanitize text (enhanced: detects corruption, rescues ACTION tokens, strips replacement chars)
         decoded_text = _sanitize_llm_text(raw_decoded)
 
         import os

@@ -21,7 +21,7 @@ SYSTEM_PROMPT_TEMPLATE = (
     "Core Guidelines:\n"
     "- Identify the interactive puzzle elements and rule mechanics through structured actions.\n"
     "- Border glyphs may be HUD trackers or interactive elements; treat their role as unknown until tested.\n"
-    "- A NO-OP means no detected visible change; it does not prove a wall or invalid action." 
+    "- A NO-OP means no detected visible change; it does not prove a wall or invalid action. "
     "Test alternatives and prerequisites.\n"
     "- Check if there is any piece that needs to matched or not, whether reach a goal post, and other possible objectives "
     "like moving from one point to another, placing object over something, etc.\n"

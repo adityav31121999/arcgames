@@ -5,7 +5,7 @@ from typing import Any, List, Optional, Tuple
 import time
 
 from ..core.actions import ARCActionMapper
-from ..core.diff import extract_grid_array, get_grid_difference_text
+from ..core.diff import clear_hud_pixels, extract_grid_array, get_grid_difference_text
 from ..core.state import ARCState
 from ..memory.knowledge import maybe_append_rule, update_verified_mechanics
 from ..utils.display import render_live, reset_live_display
@@ -257,7 +257,7 @@ class ARCRunner:
                 game_id, level, s0_state, current_state, current_valid_actions, debug_note, budget_context=budget_context
             )
 
-            if getattr(self.agent, "consecutive_parse_failures", 0) >= 3:
+            if getattr(self.agent, "consecutive_parse_failures", 0) >= 6:
                 print(
                     f"\n⛔ [HALT ON MODEL FAILURE] Aborting Level {level} step loop at Step {step_count + 1}: "
                     f"LLM produced {self.agent.consecutive_parse_failures} consecutive empty or unparseable outputs. "
@@ -281,7 +281,7 @@ class ARCRunner:
                 tag=f"step_{step_count}",
             )
 
-            diff = get_grid_difference_text(current_state.grid, next_state.grid)
+            diff = get_grid_difference_text(current_state.grid, next_state.grid, action_name=action_name)
             visual_analysis = ""
             debug_note = ""
 
@@ -388,6 +388,9 @@ class ARCRunner:
                 print(f"⛔ [BUDGET] Stopping Level {level} retries: action budget ({self._total_actions_taken}/{self._current_game_budget}) reached.")
                 break
 
+            # Reset parse failure counter at the start of every retry iteration
+            self.agent.consecutive_parse_failures = 0
+
             if iteration > 1:
                 curr_obs = env.reset() if hasattr(env, "reset") else env.step(None)
                 self.agent.world_model.reset_level_fields()
@@ -452,6 +455,8 @@ class ARCRunner:
     ) -> Any:
         """Executes full multi-level game progression with total move budget allocation."""
         self._total_actions_taken = 0
+        self.agent.consecutive_parse_failures = 0
+        clear_hud_pixels()  # Reset HUD counter registry from any previous game
         reset_live_display()
 
         effective_iterations = max_iterations_per_level or self.max_iterations_per_level

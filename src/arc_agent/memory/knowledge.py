@@ -1,5 +1,6 @@
 """Persistent markdown and in-memory knowledge store."""
 
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -56,7 +57,6 @@ def update_verified_mechanics(game_id: str, rule: str, memory_root: str | Path =
             append_text(s_path, f"\n## VERIFIED MECHANICS AND RULES\n- {rule}")
     except OSError:
         pass
-
 
 
 class KnowledgeCache:
@@ -162,6 +162,76 @@ def init_knowledge_files(
         pass
 
 
+# ---------------------------------------------------------------------------
+# HUD noise detection
+# ---------------------------------------------------------------------------
+
+def _is_hud_noise(text: str) -> bool:
+    """Returns True if *text* is a repetitive HUD step counter line that should not pollute scratchpad.
+
+    Matches patterns like:
+    - "[CHANGE] 3 altered board: 1 pixels modified in bounding box X=[58, 58], Y=[53, 53]."
+    - "No visible gameplay changes detected (HUD step counter updated; NO-OP)."
+    """
+    if "HUD step counter" in text:
+        return True
+    m = re.search(
+        r"(\d+) pixels modified in bounding box X=\[(\d+), (\d+)\], Y=\[(\d+), (\d+)\]",
+        text,
+    )
+    if m:
+        n_pixels = int(m.group(1))
+        min_x, max_x = int(m.group(2)), int(m.group(3))
+        min_y, max_y = int(m.group(4)), int(m.group(5))
+        # Single isolated pixel — filter only if it's in a border/corner HUD zone
+        if n_pixels <= 2 and (min_x == max_x) and (min_y == max_y):
+            if min_x >= 50 or min_y >= 50 or min_x <= 5 or min_y <= 5:
+                return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Scratchpad section writers
+# ---------------------------------------------------------------------------
+
+def _write_scratch_section(
+    cache: KnowledgeCache,
+    game_id: str,
+    header: str,
+    entry_text: str,
+    max_entries: int = 15,
+) -> None:
+    """Append *entry_text* to the named section, deduplicating and capping at *max_entries* bullets."""
+    entry = f"- {entry_text}\n"
+    content = cache.scratch(game_id)
+
+    if header in content:
+        parts = content.split(header, 1)
+        section_body = parts[1].strip()
+
+        # Find where the next ## section starts (if any) so we only touch our section
+        next_section = re.search(r"\n## ", section_body)
+        if next_section:
+            our_body = section_body[: next_section.start()]
+            trailing = section_body[next_section.start():]
+        else:
+            our_body = section_body
+            trailing = ""
+
+        # Deduplicate: skip if identical entry already present
+        if entry.strip() in our_body:
+            return
+
+        # Prepend new entry (most recent first) and cap bullet count
+        existing_bullets = [ln for ln in our_body.splitlines(keepends=True) if ln.strip().startswith("-")]
+        kept = existing_bullets[: max(0, max_entries - 1)]  # keep room for new entry
+        new_body = entry + "".join(kept)
+        updated = parts[0] + header + "\n" + new_body.strip() + "\n" + trailing
+        cache.write_scratch(game_id, updated)
+    else:
+        cache.append_scratch(game_id, f"\n{header}\n{entry}")
+
+
 def maybe_append_rule(
     game_id: str,
     debugger_verdict: str,
@@ -172,6 +242,9 @@ def maybe_append_rule(
     """Keep model interpretations as hypotheses; a verdict is not verification."""
     if not debugger_verdict or is_repeat or "INFERENCE FAILED" in debugger_verdict:
         return
+    # Suppress HUD step counter noise — never write these to scratchpad
+    if _is_hud_noise(debugger_verdict):
+        return
     observation = (
         "No visible gameplay change detected; cause unknown." if changed is False
         else "Visible gameplay change detected; goal progress unknown." if changed is True
@@ -181,18 +254,6 @@ def maybe_append_rule(
     _write_scratch_section(
         cache, game_id, "## HYPOTHESES & ASSUMPTIONS", debugger_verdict.strip()
     )
-
-
-def _write_scratch_section(cache: KnowledgeCache, game_id: str, header: str, entry_text: str) -> None:
-    entry = f"- {entry_text}\n"
-    content = cache.scratch(game_id)
-    if header in content:
-        parts = content.split(header)
-        if entry not in parts[1]:
-            updated = parts[0] + header + "\n" + entry + parts[1].strip() + "\n"
-            cache.write_scratch(game_id, updated)
-    else:
-        cache.append_scratch(game_id, f"\n{header}\n{entry}")
 
 
 def apply_iteration_review(

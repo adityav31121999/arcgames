@@ -125,7 +125,14 @@ def main():
         arcade = None
 
     if args.game:
-        target_games = [args.game]
+        # Resolve prefix/slug match (e.g. 'm0r0' -> 'm0r0-492f87ba')
+        matched = next(
+            (g for g in game_list if g == args.game or g.lower().startswith(f"{args.game.lower()}-") or args.game.lower() in g.lower()),
+            args.game,
+        )
+        if matched != args.game:
+            print(f"🎯 Resolved game '{args.game}' -> '{matched}'")
+        target_games = [matched]
     else:
         target_games = game_list
 

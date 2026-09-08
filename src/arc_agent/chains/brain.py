@@ -9,6 +9,48 @@ from ..core.object_detection import is_click_only
 from ..memory.knowledge import KnowledgeCache
 from .prompts import PROMPT_ACTION, PROMPT_CLICK_ONLY_TARGET, SYSTEM_PROMPT
 
+# Maximum number of action-log table rows to include in prompt (prevents 50+ line bloat)
+_MAX_ACTION_LOG_ROWS = 12
+# Maximum characters of scratchpad to inject into prompt
+_MAX_SCRATCH_CHARS = 1200
+
+
+def _window_actions_log(actions_log: str, max_rows: int = _MAX_ACTION_LOG_ROWS) -> str:
+    """Keep only the markdown table header + the most recent *max_rows* data rows.
+
+    The header block (everything up to and including the separator row) is always
+    preserved.  Only body rows (lines starting with '|') beyond the cap are dropped.
+    """
+    if not actions_log:
+        return actions_log
+
+    lines = actions_log.splitlines(keepends=True)
+    header_lines: List[str] = []
+    body_lines: List[str] = []
+    in_body = False
+
+    for line in lines:
+        stripped = line.strip()
+        if in_body:
+            if stripped.startswith("|"):
+                body_lines.append(line)
+            else:
+                # Non-table line after body starts (e.g. retry iteration marker)
+                body_lines.append(line)
+        else:
+            header_lines.append(line)
+            # Detect the separator row (|---|---|...) that ends the header
+            if stripped.startswith("|") and all(
+                c in "|-: \t" for c in stripped
+            ) and "---" in stripped:
+                in_body = True
+
+    if len(body_lines) > max_rows:
+        omitted = len(body_lines) - max_rows
+        body_lines = [f"| ... | {omitted} earlier rows omitted ... | | |\n"] + body_lines[-max_rows:]
+
+    return "".join(header_lines + body_lines)
+
 
 class BrainChain:
     """Core reasoning and action-selection engine."""
@@ -57,8 +99,12 @@ class BrainChain:
         click_history: str = "",
     ) -> str:
         """Determines next discrete or complex coordinate action."""
-        actions_log = cache.actions_log(game_id, level)
-        scratch = cache.scratch(game_id)
+        # Window actions log to avoid 50+ line prompt bloat
+        raw_actions_log = cache.actions_log(game_id, level)
+        actions_log = _window_actions_log(raw_actions_log, max_rows=_MAX_ACTION_LOG_ROWS)
+
+        # Tail scratchpad to prevent context explosion with repetitive HUD noise
+        scratch = cache.scratch(game_id, max_chars=_MAX_SCRATCH_CHARS)
 
         grid_repr_context = (
             f"Current board image attached. Grid shape (height, width): {current_state.grid.shape}. "
@@ -85,7 +131,7 @@ State Metadata:
 {current_state.compact_json_repr}
 {grid_repr_context}
 
-Recent Actions Log:
+Recent Actions Log (last {_MAX_ACTION_LOG_ROWS} steps):
 {actions_log}
 
 Knowledge Store:
@@ -116,8 +162,9 @@ Next action:"""
     ) -> str:
         """Synthesizes speculative macro-plan sequence for rapid execution."""
         ostate = cache.ostate(game_id)
-        scratch = cache.scratch(game_id)
-        actions_log = cache.actions_log(game_id, level)
+        scratch = cache.scratch(game_id, max_chars=_MAX_SCRATCH_CHARS)
+        raw_actions_log = cache.actions_log(game_id, level)
+        actions_log = _window_actions_log(raw_actions_log, max_rows=_MAX_ACTION_LOG_ROWS)
         valid_names = [getattr(a, "name", str(a)) for a in valid_actions]
         world_model_section = f"\n{world_model_block}\n" if world_model_block else ""
 

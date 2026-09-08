@@ -38,7 +38,7 @@ class TrajectoryMemory:
     def update_sprite_region(
         self, grid1: Optional[np.ndarray], grid2: Optional[np.ndarray]
     ) -> None:
-        """Determines active operational zones across all state shifts, ignoring status bars."""
+        """Determines active operational zones across all state shifts, ignoring HUD and status bars."""
         if grid1 is None or grid2 is None or grid1.shape != grid2.shape:
             return
         gp_grid1 = get_gameplay_grid(grid1)
@@ -50,6 +50,20 @@ class TrajectoryMemory:
             return
 
         y_indices, x_indices = np.where(diff)
+
+        # Exclude registered HUD pixels so the step counter never poisons sprite tracking
+        from ..core.diff import get_hud_pixels
+        hud_coords = get_hud_pixels()
+        if hud_coords:
+            keep_mask = np.array(
+                [(int(x), int(y)) not in hud_coords for x, y in zip(x_indices, y_indices)],
+                dtype=bool,
+            )
+            if not np.any(keep_mask):
+                return  # All changed pixels are HUD — ignore
+            x_indices = x_indices[keep_mask]
+            y_indices = y_indices[keep_mask]
+
         min_x, max_x = int(np.min(x_indices)), int(np.max(x_indices))
         min_y, max_y = int(np.min(y_indices)), int(np.max(y_indices))
 

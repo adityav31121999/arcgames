@@ -4,8 +4,30 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 import re
 
-_ACTION_RE = re.compile(r"^\s*ACTION\s*[:=]\s*([A-Za-z0-9_]+)\s*(.*)$", re.IGNORECASE)
+_ACTION_RE = re.compile(r".*\bACTION\*{0,2}\s*[:=]\s*([A-Za-z0-9_]+)\b(.*)$", re.IGNORECASE)
 _COORD_RE = re.compile(r"\bX\s*[:=]\s*(-?\d+)\D+Y\s*[:=]\s*(-?\d+)", re.IGNORECASE)
+
+_ACTION_NAME_ALIASES: Dict[str, str] = {
+    "UP": "ACTION1",
+    "DOWN": "ACTION2",
+    "LEFT": "ACTION3",
+    "RIGHT": "ACTION4",
+    "INTERACT": "ACTION5",
+    "SELECT": "ACTION5",
+    "EXECUTE": "ACTION5",
+    "CLICK": "ACTION6",
+    "MOUSE": "ACTION6",
+    "UNDO": "ACTION7",
+    "RESET": "RESET",
+    "1": "ACTION1",
+    "2": "ACTION2",
+    "3": "ACTION3",
+    "4": "ACTION4",
+    "5": "ACTION5",
+    "6": "ACTION6",
+    "7": "ACTION7",
+    "0": "RESET",
+}
 
 
 def is_complex_action(action: Any) -> bool:
@@ -75,10 +97,28 @@ class ActionSignature:
 class ARCActionMapper:
     @staticmethod
     def _find_action(name: str, available_actions: List[Any]) -> Optional[Any]:
-        name = name.upper()
+        """Finds matching action supporting enums, integer IDs, string names, and directional aliases."""
+        clean_name = name.strip().upper()
+        # 1. Direct exact match by action name, str(), or .value
         for action in available_actions:
-            if getattr(action, "name", str(action)).upper() == name:
+            act_name = getattr(action, "name", str(action)).upper()
+            act_val = str(getattr(action, "value", action)).upper()
+            if act_name == clean_name or act_val == clean_name:
                 return action
+            if act_name.replace("_", "") == clean_name.replace("_", ""):
+                return action
+
+        # 2. Match via canonical aliases (e.g. 'UP' -> 'ACTION1', '1' -> 'ACTION1')
+        canonical = _ACTION_NAME_ALIASES.get(clean_name, clean_name)
+        for action in available_actions:
+            act_name = getattr(action, "name", str(action)).upper()
+            act_val = str(getattr(action, "value", action)).upper()
+            act_canonical = _ACTION_NAME_ALIASES.get(act_name, _ACTION_NAME_ALIASES.get(act_val, act_name))
+            if act_name == canonical or act_val == canonical or act_canonical == canonical:
+                return action
+            if act_name.replace("_", "") == canonical.replace("_", ""):
+                return action
+
         return None
 
     @staticmethod
@@ -96,7 +136,7 @@ class ARCActionMapper:
         selected_action, action_data = None, {}
 
         for line in response_text.splitlines():
-            m = _ACTION_RE.match(line)
+            m = _ACTION_RE.match(line.strip())
             if not m:
                 continue
             candidate = ARCActionMapper._find_action(m.group(1), available_actions)
@@ -114,16 +154,18 @@ class ARCActionMapper:
             break
 
         if selected_action is None:
-            found = [
-                a
-                for a in available_actions
-                if re.search(
-                    r"\b" + re.escape(getattr(a, "name", str(a)).upper()) + r"\b",
-                    response_text.upper(),
-                )
-            ]
-            if len(found) == 1:
-                selected_action = found[0]
+            # Fallback search for action names or aliases mentioned as whole words
+            matched_candidates = []
+            for a in available_actions:
+                act_name = getattr(a, "name", str(a)).upper()
+                act_val = str(getattr(a, "value", a)).upper()
+                if re.search(r"\b" + re.escape(act_name) + r"\b", response_text.upper()):
+                    matched_candidates.append(a)
+                elif act_val != act_name and re.search(r"\b" + re.escape(act_val) + r"\b", response_text.upper()):
+                    matched_candidates.append(a)
+
+            if len(matched_candidates) == 1:
+                selected_action = matched_candidates[0]
                 coords = extract_coordinates(response_text, grid_shape)
                 if coords:
                     action_data = coords

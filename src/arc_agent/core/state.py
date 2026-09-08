@@ -209,8 +209,12 @@ def compute_transition(
     if previous_state is None or previous_state.grid is None or current_state.grid is None:
         changed, is_noop = None, False
     else:
+        # Extract action name for HUD step counter filtering in detect_real_change
+        action_name = ""
+        if action_sig is not None:
+            action_name = getattr(action_sig, "name", str(action_sig))
         try:
-            changed = detect_real_change(previous_state.grid, current_state.grid)
+            changed = detect_real_change(previous_state.grid, current_state.grid, action_name=action_name)
         except Exception:
             changed = previous_state.state_hash != current_state.state_hash
         is_noop = not changed

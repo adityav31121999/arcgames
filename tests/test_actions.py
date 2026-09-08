@@ -130,3 +130,70 @@ def test_agent_log_action_signature_formats(tmp_path):
     assert "ACTION1" in content
     assert "UNKNOWN" in content
 
+
+def test_action_mapper_integer_actions():
+    """Verify ARCActionMapper handles raw integer action spaces [1, 2, 3, 4, 6, 7]."""
+    available = [1, 2, 3, 4, 5, 6, 7]
+
+    # Test ACTION=ACTION1 maps to 1
+    act, data = ARCActionMapper.parse("ACTION=ACTION1", available)
+    assert act == 1
+    assert data == {}
+
+    # Test ACTION=1 maps to 1
+    act, data = ARCActionMapper.parse("ACTION=1", available)
+    assert act == 1
+
+    # Test ACTION=UP maps to 1
+    act, data = ARCActionMapper.parse("ACTION=UP", available)
+    assert act == 1
+
+    # Test ACTION=RIGHT maps to 4
+    act, data = ARCActionMapper.parse("ACTION=RIGHT", available)
+    assert act == 4
+
+    # Test markdown bold **ACTION**: 3
+    act, data = ARCActionMapper.parse("**ACTION**: 3", available)
+    assert act == 3
+
+    # Test complex click with integer action 6
+    act, data = ARCActionMapper.parse("ACTION=6 X=15 Y=25", available, grid_shape=(30, 30))
+    assert act == 6
+    assert data == {"x": 15, "y": 25}
+
+    # Test ACTION=CLICK X=10 Y=20 maps to 6
+    act, data = ARCActionMapper.parse("ACTION=CLICK X=10 Y=20", available, grid_shape=(30, 30))
+    assert act == 6
+    assert data == {"x": 10, "y": 20}
+
+
+def test_action_mapper_markdown_and_prefix_formats():
+    """Verify various prompt reply formats like 'Next action: ACTION=1' or '* ACTION: UP'."""
+    available = [Action.ACTION1, Action.ACTION2, Action.ACTION3, Action.ACTION4]
+
+    cases = [
+        ("Next action: ACTION=ACTION1", Action.ACTION1),
+        ("Next action: ACTION=1", Action.ACTION1),
+        ("Plan: Move up to explore.\nACTION=UP", Action.ACTION1),
+        ("- **ACTION**: ACTION2", Action.ACTION2),
+        ("* ACTION: DOWN", Action.ACTION2),
+        ("Plan: Try going left.\nNext action: ACTION=LEFT", Action.ACTION3),
+    ]
+    for text, expected in cases:
+        act, _ = ARCActionMapper.parse(text, available)
+        assert act == expected, f"Failed parsing: {text!r}"
+
+
+def test_prohibited_action_distinguishes_syntax_validity():
+    """Verify that a prohibited action can be recognized as valid syntax even though rejected."""
+    available = [Action.ACTION1, Action.ACTION2]
+    prohibited = {ActionSignature(name="ACTION1")}
+
+    # Rejected when prohibited is passed
+    act, _ = ARCActionMapper.parse("ACTION=ACTION1", available, prohibited=prohibited)
+    assert act is None
+
+    # But accepted when prohibited=None, allowing the agent to confirm the model is responsive
+    act_syntax, _ = ARCActionMapper.parse("ACTION=ACTION1", available, prohibited=None)
+    assert act_syntax == Action.ACTION1
+
