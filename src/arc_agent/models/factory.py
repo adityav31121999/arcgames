@@ -509,6 +509,12 @@ class ModelFactory:
         import transformers
 
         model_class = getattr(transformers, "Gemma4ForConditionalGeneration", None)
+        for class_name in ("Gemma4Config", "GenerationConfig"):
+            cls = getattr(transformers, class_name, None)
+            if cls is not None and any(hasattr(cls, flag) for flag in (
+                "_orig_raw_init", "_patched_pad_done", "_patched_all_done", "_patched_vocab_proxy",
+            )):
+                raise RuntimeError("Legacy global model patches are active. Restart the session and use the clean notebook setup.")
         if model_class is None:
             raise RuntimeError("Install an offline Transformers build with native Gemma4ForConditionalGeneration support.")
         processor = transformers.AutoProcessor.from_pretrained(

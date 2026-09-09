@@ -2,6 +2,16 @@
 
 ## Reliability and context handling
 
+Run `notebooks/assumeAndPlay.ipynb` in a fresh session after updating the source
+dataset. Its setup preserves native Transformers classes instead of applying
+global configuration patches. Before gameplay it tests raw text generation and
+recognition of a solid red image, saving runtime details and unsanitized answers
+to `/kaggle/working/model_health.json`. A failure stops startup; inspect the report
+to distinguish garbled text, image failures, backend exceptions, and strict answer
+format mismatches. Passing these small checks does not establish game competence.
+NVIDIA documents this NVFP4 checkpoint for vLLM; loading its weights in Transformers
+alone does not establish runtime compatibility.
+
 Board arrays are rendered to PIL images and passed to the checkpoint's multimodal
 processor with the text prompt. The native chat template inserts image placeholders;
 the processor supplies image start/end markers, image token slots, and pixel tensors

@@ -117,6 +117,23 @@ def test_native_loader_rejects_tokenizer_only_processor(native_runtime):
     transformers.Gemma4ForConditionalGeneration.from_pretrained.assert_not_called()
 
 
+def test_native_loader_rejects_legacy_global_patches(native_runtime):
+    transformers, _, config = native_runtime
+    transformers.GenerationConfig = SimpleNamespace(_orig_raw_init=object())
+    with pytest.raises(RuntimeError, match="Legacy global model patches"):
+        ModelFactory.create_model(config)
+    transformers.Gemma4ForConditionalGeneration.from_pretrained.assert_not_called()
+
+
+def test_delivered_notebook_does_not_modify_transformers_classes():
+    notebook = json.loads((NOTEBOOK.parent / "assumeAndPlay.ipynb").read_text(encoding="utf-8"))
+    code = "\n".join("".join(c["source"]) for c in notebook["cells"] if c["cell_type"] == "code")
+    for unsafe in ("AutoConfig.register", "GenerationConfig.__init__ =", "_safe_from_dict",
+                   "gemma4_cfg_cls.__init__ =", "del sys.modules", "safetensors.safe_open ="):
+        assert unsafe not in code
+    assert "check_model_health(llm" in code
+
+
 def test_notebook_execution_cell_respects_explicit_move_budget(tmp_path, monkeypatch):
     from tests.test_agent_reliability import Environment
     from tests import test_runner_budget as components

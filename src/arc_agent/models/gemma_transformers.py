@@ -482,7 +482,8 @@ class GemmaTransformersChatModel(BaseChatModel):
                     raw_decoded = raw_decoded.split(s)[0].strip()
 
         # Sanitize text (enhanced: detects corruption, rescues ACTION tokens, strips replacement chars)
-        decoded_text = _sanitize_llm_text(raw_decoded, action_response=kwargs.get("action_response", False))
+        decoded_text = (raw_decoded if kwargs.get("raw_output", False) else
+                        _sanitize_llm_text(raw_decoded, action_response=kwargs.get("action_response", False)))
 
         import os
         if (
