@@ -1,5 +1,29 @@
 # ARC-AGI-3 LangChain Inference Agent
 
+## Kaggle vLLM setup
+
+`notebooks/assumeAndPlay.ipynb` now runs Eye and Brain through vLLM's in-process
+`LLM.chat()` API. It uses the local checkpoint and its chat template, passes board
+images as PNG data URLs, and disables thinking for short structured responses.
+Transformers supplies the CPU processor for context budgeting; it does not load
+model weights. The default YAML configurations select `backend: vllm`.
+
+Attach the updated source bundle, model files, and a **Linux vLLM wheelhouse with
+all dependencies** matching Kaggle's Python and GPU runtime. Build/download that
+wheelhouse on a compatible Linux environment using `requirements-vllm.txt`; do not
+use Windows wheels. The source ZIP does not contain these third-party wheels.
+Start a fresh Kaggle session and run the notebook from the top. The first cell
+installs the dependencies together, offline, before importing the GPU runtime.
+
+Startup runs the text and red-image checks before gameplay and writes
+`/kaggle/working/model_health.json`, including the vLLM version. Defaults are one GPU,
+32,768 context tokens, two images per request, 85% GPU memory utilization, and eager
+execution. Adjust these in the initialization cell if required by the runtime.
+There is no automatic fallback to Transformers when vLLM loading fails.
+
+References: [vLLM chat](https://docs.vllm.ai/en/latest/models/generative_models/),
+[multimodal inputs](https://docs.vllm.ai/en/latest/features/multimodal_inputs/).
+
 ## Reliability and context handling
 
 Run `notebooks/assumeAndPlay.ipynb` in a fresh session after updating the source

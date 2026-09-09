@@ -1,0 +1,12 @@
+# Install on Kaggle/Linux in a fresh environment before importing torch.
+# Use a wheelhouse whose vLLM build supports Gemma 4 and ModelOpt NVFP4.
+# Let vLLM resolve its required torch/transformers versions together.
+vllm
+langchain-core
+pydantic
+pyyaml
+pillow
+numpy
+matplotlib
+arc-agi
+arcengine

@@ -26,10 +26,13 @@ def check_model_health(llm, report_path):
         "cuda": torch.version.cuda, "model_class": type(model).__name__,
         "processor_class": type(processor).__name__,
         "tokenizer_class": type(tokenizer).__name__,
-        "model_config": config.to_dict() if hasattr(config, "to_dict") else str(config),
+        "model_config": config if isinstance(config, dict) else config.to_dict() if hasattr(config, "to_dict") else str(config),
         "generation_config": generation.to_dict() if hasattr(generation, "to_dict") else str(generation),
         "checks": [],
     }
+    if getattr(llm, "engine", None) is not None:
+        import vllm
+        report.update(backend="vllm", vllm=vllm.__version__, model_class=type(llm.engine).__name__)
     probes = [
         ("text", "Reply with just the word READY. Do not explain.", "ready"),
         ("image", [

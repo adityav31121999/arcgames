@@ -26,7 +26,8 @@ class ModelFactory:
         import torch
 
 
-        silence_hf_warnings()
+        if config.backend != "vllm":
+            silence_hf_warnings()
 
         # Resolve model path / ID
         model_id = config.model_id
@@ -41,6 +42,10 @@ class ModelFactory:
                 print(f"🌐 [MODEL FACTORY] Using model identifier: {model_id}")
 
         print(f"🚀 [MODEL FACTORY] Loading model '{model_id}' on {config.device} ({config.torch_dtype})...")
+
+        if config.backend == "vllm":
+            from .vllm_chat import load_vllm
+            return load_vllm(config, model_id)
 
         # Native Gemma 4 checkpoints must retain their architecture and generation
         # configuration, including multiple EOS tokens. Avoid legacy global patches.

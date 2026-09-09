@@ -1,5 +1,8 @@
 # Default Configuration for Single RTX PRO 6000 (96GB VRAM)
 model:
+  backend: vllm
+  vllm_gpu_memory_utilization: 0.85
+  vllm_enforce_eager: true
   model_id: "nvidia/Gemma-4-26B-A4B-NVFP4"
   fallback_model_ids:
     - "google/gemma-4-26b-a4b"
@@ -8,7 +11,7 @@ model:
   device: "cuda:0"
   torch_dtype: "bfloat16"
   attn_implementation: "sdpa" # Or "flash_attention_2"
-  max_context_length: 81930
+  max_context_length: 32768
   trust_remote_code: true
   temperature: 0.0
   top_p: 0.95

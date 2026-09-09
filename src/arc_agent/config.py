@@ -1,13 +1,16 @@
 """Configuration models and loader for ARC-AGI-3 Agent."""
 
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Literal
 import os
 import yaml
 from pydantic import BaseModel, Field
 
 
 class ModelConfig(BaseModel):
+    backend: Literal["transformers", "vllm"] = "transformers"
+    vllm_gpu_memory_utilization: float = Field(default=0.85, gt=0, lt=1)
+    vllm_enforce_eager: bool = True
     model_id: str = Field(
         default="nvidia/Gemma-4-26B-A4B-NVFP4",
         description="HuggingFace model ID or local directory path",

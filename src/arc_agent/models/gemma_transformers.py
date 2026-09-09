@@ -322,6 +322,7 @@ class GemmaTransformersChatModel(BaseChatModel):
         while True:
             prompt_text = self.processor.apply_chat_template(
                 formatted_messages, tokenize=False, add_generation_prompt=True,
+                **({"enable_thinking": False} if self._llm_type == "vllm_chat_model" else {}),
             )
             processor_kwargs = dict(text=[prompt_text], return_tensors="pt", padding=True,
                                     add_special_tokens=False)

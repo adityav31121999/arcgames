@@ -1,10 +1,13 @@
 # Kaggle Offline Competition Configuration
 model:
+  backend: vllm
+  vllm_gpu_memory_utilization: 0.85
+  vllm_enforce_eager: true
   model_id: "/kaggle/input" # Auto-locator will scan for Gemma-4-26B / NVFP4 safetensors
   device: "cuda:0"
   torch_dtype: "bfloat16"
   attn_implementation: "sdpa"
-  max_context_length: 81930
+  max_context_length: 32768
   trust_remote_code: true
   temperature: 0.0
   top_p: 0.95
