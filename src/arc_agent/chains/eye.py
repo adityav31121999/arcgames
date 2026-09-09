@@ -99,12 +99,17 @@ State Metadata of S0:
         return text
 
     def analyse_visual(
-        self, game_id: str, s0_state: ARCState, transition: ARCTransition, diff_text: str
+        self, game_id: str, s0_state: ARCState, transition: ARCTransition, diff_text: str,
+        *, intended_plan: str = "", expected_effect: str = "", world_model_block: str = "",
     ) -> str:
         """Analyzes specific visual changes between steps using ground-truth diff bounding box."""
         prompt = f"""{PROMPT_ANALYSE_VISUAL}
 
 Action causing transition: {transition.action_sig}
+Intended plan: {intended_plan or 'Unknown (fallback or speculative action).'}
+Expected observable effect: {expected_effect or 'Unknown; do not invent a prediction.'}
+Compare this prediction with the observed changes; report support, contradiction, or uncertainty.
+Working world model (hypotheses): {world_model_block}
 Previous board shape: {transition.previous.grid.shape if transition.previous and transition.previous.grid is not None else 'unavailable'}
 Current board shape: {transition.current.grid.shape if transition.current.grid is not None else 'unavailable'}
 Coordinates use original grid cells: X=column, Y=row, origin top left.

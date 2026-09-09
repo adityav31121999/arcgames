@@ -78,7 +78,7 @@ def test_memory_and_world_fields_are_not_cut_off(tmp_path):
     "DIVERGED: This must be a wall.",
     "There is no wall; movement was not blocked.",
 ])
-def test_debugger_does_not_promote_guesses_to_verified_rules(tmp_path, verdict):
+def test_observations_do_not_promote_guesses_to_verified_rules(tmp_path, verdict):
     cache = KnowledgeCache(tmp_path)
     maybe_append_rule("g", verdict, False, False, cache)
     memory = cache.scratch("g")
@@ -96,8 +96,8 @@ def test_review_preserves_verified_rules_and_marks_its_claims_unverified(tmp_pat
     assert "## REVIEW HYPOTHESES (UNVERIFIED)\n- Maybe a wall" in memory
 
 
-def test_debugger_format_updates_world_model_and_includes_action_coordinates(tmp_path):
-    from arc_agent.chains.debugger import DebuggerChain
+def test_eye_format_updates_world_model_and_includes_action_coordinates(tmp_path):
+    from arc_agent.chains.eye import EyeChain
     from arc_agent.core.state import compute_transition
     from arc_agent.core.actions import ActionSignature
     captured = []
@@ -113,7 +113,7 @@ def test_debugger_format_updates_world_model_and_includes_action_coordinates(tmp
     current = ARCState.create("g", 1, 0, SimpleNamespace(
         grid=np.zeros((3, 3), dtype=int), state="PLAYING", levels_completed=0))
     transition = compute_transition(current, current, ActionSignature("ACTION6", (("x", 1), ("y", 2))))
-    result = DebuggerChain(Recorder()).validate("g", 1, current, transition, "0 pixels", cache=KnowledgeCache(tmp_path))
+    result = EyeChain(Recorder()).analyse_visual("g", current, transition, "0 pixels")
     prompt = captured[-1].content[0]["text"]
     assert str(transition.action_sig) in prompt
     assert "Previous board" in prompt

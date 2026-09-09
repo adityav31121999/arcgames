@@ -102,16 +102,6 @@ PROMPT_ANALYSE_VISUAL = (
     "Use these labeled fields: Recent findings: <observed changes only>; Open questions: <uncertain cause or goal progress>. Put each field on its own line. A changed board alone does not prove progress."
 )
 
-PROMPT_STATE_DEBUG = (
-    "Evaluate the latest action result using the recent action history and pixel changes in English.\n"
-    "Separate observed effects from possible causes. A NO-OP does not prove collision, and a change does not prove progress. Treat explanations as hypotheses until tested.\n"
-    "Compare the supplied expected observable effect with the before/after evidence. If no prediction was supplied, say it is unknown.\n"
-    "Reply using three labeled lines:\n"
-    "Recent findings: <observed effect supported by the transition>\n"
-    "Open questions: <uncertain mechanism and a test to distinguish explanations>\n"
-    "Plan: <next action to test>"
-)
-
 PROMPT_ACTION = (
     "Select the next action to advance toward the objective based on current state and verified rules.\n"
     "Avoid repeating an unchanged experiment; retry a NO-OP when state or prerequisites change."

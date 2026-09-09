@@ -102,9 +102,7 @@ def test_agent_log_action_signature_formats(tmp_path):
     mock_chain = MagicMock()
     agent = ARCLangChainAgent(
         eye_chain=mock_chain,
-        debugger_chain=mock_chain,
         brain_chain=mock_chain,
-        reviewer_chain=mock_chain,
         resolver=MagicMock(),
         memory_root=str(tmp_path / "memory"),
         vision_cache_dir=str(tmp_path / "vision"),

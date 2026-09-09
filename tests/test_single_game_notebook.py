@@ -127,8 +127,8 @@ def test_notebook_execution_cell_respects_explicit_move_budget(tmp_path, monkeyp
     env = Environment(complete=True)
     env.environment_info = SimpleNamespace(baseline_actions=[10, 10], win_levels=2)
     namespace = {name: getattr(components, name) for name in (
-        "ARCRunner", "ARCLangChainAgent", "EyeChain", "DebuggerChain", "BrainChain",
-        "ReviewerChain", "GameStateResolver",
+        "ARCRunner", "ARCLangChainAgent", "EyeChain", "BrainChain",
+        "GameStateResolver",
     )}
     namespace.update({
         "Path": Path, "json": json, "time": time, "USE_MOCK": True,

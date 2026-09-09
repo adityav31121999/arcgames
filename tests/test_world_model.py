@@ -8,9 +8,7 @@ from arc_agent.core.actions import ARCActionMapper
 from arc_agent.core.resolver import GameStateResolver
 from arc_agent.core.state import ARCState
 from arc_agent.chains.brain import BrainChain
-from arc_agent.chains.debugger import DebuggerChain
 from arc_agent.chains.eye import EyeChain
-from arc_agent.chains.reviewer import ReviewerChain
 from arc_agent.agent.arc_langchain_agent import ARCLangChainAgent
 from arc_agent.agent.runner import ARCRunner
 from arc_agent.memory.world_model import WorldModel, _extract_labeled_blocks
@@ -127,16 +125,12 @@ def test_agent_world_model_closed_loop(tmp_path):
     ])
 
     eye = EyeChain(mock_model)
-    debugger = DebuggerChain(mock_model)
     brain = BrainChain(mock_model)
-    reviewer = ReviewerChain(mock_model)
     resolver = GameStateResolver()
 
     agent = ARCLangChainAgent(
         eye_chain=eye,
-        debugger_chain=debugger,
         brain_chain=brain,
-        reviewer_chain=reviewer,
         resolver=resolver,
         memory_root=str(tmp_path),
     )

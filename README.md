@@ -5,8 +5,8 @@
 Board arrays are rendered to PIL images and passed to the checkpoint's multimodal
 processor with the text prompt. The native chat template inserts image placeholders;
 the processor supplies image start/end markers, image token slots, and pixel tensors
-for the vision model. Vision and Debugger receive both the previous and current board
-for transition evaluation. Debugger also receives Brain's intended plan and expected
+for the vision model. Eye receives both the previous and current board
+for transition evaluation. Eye also receives Brain's intended plan and expected
 observable effect.
 
 The wrapper counts the processor-expanded input tokens, including image slots, and
@@ -23,13 +23,13 @@ effective context limit, and compacted sections. The same data is available in
 `GemmaTransformersChatModel.last_context_usage`. Token capacity does not guarantee
 that a particular prompt and image count fit GPU memory.
 
-Fast evaluation uses measured board differences, with full Vision/Debugger evaluation
+Fast evaluation uses measured board differences, with full Eye evaluation
 on stalled, repeated, or uncertain transitions, after a failed evaluation, and every
 `agent.full_eval_interval` steps (default 8). Speculative execution is capped at this
 interval and hands off for evaluation before Brain replans. Set
 `agent.speculative_plan_max_steps=0` to disable speculative planning. Malformed
-Vision/Debugger/Reviewer responses receive one retry; their `last_result` reports
-failure separately from world-model facts. Only externally verified HUD coordinates
+Eye observations and Brain reviews receive one retry; `eye.last_result` and
+`brain.last_review_result` report failure separately from world-model facts. Only externally verified HUD coordinates
 are masked, so border movement and uncertain border targets remain visible.
 
 Generation defaults to `repeat_penalty=1.0`. Brain requests an explicit
@@ -47,9 +47,7 @@ An agentic reasoning framework for **ARC-AGI-3** (ARC Prize 2026), powered by **
 - **Hardware Optimization (RTX PRO 6000 96GB VRAM)**: With 96GB of high-bandwidth VRAM, the entire Gemma 4 MoE 26B-A4B model (both vision tower and all expert routing layers) fits directly into GPU memory with zero CPU bottlenecks, enabling full context handling and rapid KV-cache throughput.
 - **LangChain Modular Architecture**: Structured with LangChain Expression Language (LCEL) Runnables and custom `BaseChatModel` wrappers:
   - 👁️ **Perception (Eye Chain)**: Multimodal spatial understanding of S0 grid layout, goal anchors, and cross-level state deltas.
-  - 🔍 **Verification (Debugger Chain)**: Fast NumPy ground-truth pixel difference bounding-box analysis and transition collision/divergence verification.
-  - 🧠 **Policy (Brain Chain)**: High-level reasoning, legal action filtering (excluding visited loops and oscillating paths), sprite bounding-box guidance, and speculative one-shot macro planning.
-  - 📝 **Meta-Reflection (Reviewer Chain)**: Post-failure iteration review that updates and consolidates verified mechanics into persistent markdown memory (`scratchpad.md`).
+  - 🧠 **Policy (Brain Chain)**: High-level reasoning, legal action filtering (excluding visited loops and oscillating paths), sprite bounding-box guidance, and speculative one-shot macro planning, and failed-attempt reviews saved as unverified hypotheses.
 - **Robust Spatial & Trajectory Memory**:
   - Active sprite bounding-box tracker (isolating cursor movement from static terrain).
   - Oscillation detection ($A \rightarrow B \rightarrow A$ filter).
@@ -87,9 +85,7 @@ arcgame/
 │       ├── chains/
 │       │   ├── prompts.py      # System and prompt templates
 │       │   ├── eye.py          # Multimodal perception chains (S0 assumption & visual diff)
-│       │   ├── debugger.py     # Transition validation & rule divergence checks
 │       │   ├── brain.py        # Next-action selection & speculative macro planning
-│       │   └── reviewer.py     # Post-failure reflection & rule consolidation
 │       ├── agent/
 │       │   ├── arc_langchain_agent.py # High-level ARCAgent coordinating chains & memory
 │       │   └── runner.py       # Execution loops, baseline step limits & timeout monitor
@@ -107,7 +103,7 @@ arcgame/
     ├── test_actions.py         # Tests for action parsing, coordinate heuristics & fallbacks
     ├── test_diff.py            # Tests for NumPy visual diff and border stripping
     ├── test_trajectory.py      # Tests for loop detection, oscillation prevention & sprite tracking
-    └── test_chains.py          # Tests for LangChain perception, debug, brain & review chains
+    └── test_chains.py          # Tests for Eye perception and Brain planning/review
 ```
 
 
@@ -214,3 +210,93 @@ This generates `dist/arc_agent-0.1.0-py3-none-any.whl` and `dist/arc_agent_sourc
 ## 📜 License
 
 MIT License. Designed for the ARC-AGI-3 Competition (ARC Prize 2026).
+
+
+### Root Cause Analysis: Why the LLM is Producing Non-English Tokens
+
+The appearance of non-English tokens (CJK Chinese ideographs, Cyrillic, etc.) and the subsequent `[CRITICAL LLM FAILURE]` (aborting at Step 12 and Step 41) is caused by a compounding chain of **generation parameters, prompt tokenization, and tokenizer mechanics**:
+
+---
+
+### 1. Primary Cause: `repetition_penalty = 1.05` on a Long Multilingual Prompt
+
+In [`src/arc_agent/models/gemma_transformers.py`](file:///e:/code-in-progress/arcgame/src/arc_agent/models/gemma_transformers.py#L200) and [`src/arc_agent/config.py`](file:///e:/code-in-progress/arcgame/src/arc_agent/config.py#L29):
+```python
+repeat_penalty: float = Field(default=1.05)
+```
+In Hugging Face Transformers, `RepetitionPenaltyLogitsProcessor` penalizes **all tokens present in the input prompt (`input_ids`)**, not just newly generated tokens:
+- If $\text{logit} > 0$: $\text{logit} = \frac{\text{logit}}{\text{penalty}}$
+- If $\text{logit} < 0$: $\text{logit} = \text{logit} \times \text{penalty}$
+
+The prompt passed to the Brain chain is **over 1,000 tokens long**. It contains nearly every common English connective word (`the`, `to`, `is`, `a`, `and`, `in`, `for`), all punctuation, all action names (`ACTION1` through `ACTION6`), direction words (`up`, `down`, `left`, `right`), and numbers `0-9`.
+
+1. **English Tokens Suppressed**: Every single one of these English words and punctuation marks receives a logit penalty right from token 0.
+2. **Multilingual Tokens Untouched**: `Gemma-4-26B-A4B` has a **256,000-token multilingual vocabulary** containing Chinese, Japanese, Cyrillic, Arabic, and Devanagari tokens. **None of these foreign tokens appeared anywhere in the prompt.** Their logits receive **zero penalty**.
+3. **Greedy Decoding Flips to Foreign Tokens**: Because `BrainChain` runs greedy decoding ([`temperature=0.0`](file:///e:/code-in-progress/arcgame/src/arc_agent/chains/brain.py#L149)), as soon as a heavily penalized English candidate falls below an unpenalized non-English synonym or homoglyph, the model deterministically selects the non-English token.
+4. **Self-Attention Cascade**: Once the first non-English token is emitted, self-attention attends to it, causing the model to generate the next 20–45 characters in Chinese or Cyrillic. This explains the exact ratio observed in your log:
+   $$\frac{25}{212} \approx 0.12, \quad \frac{38}{239} \approx 0.16, \quad \frac{40}{157} \approx 0.25$$
+
+---
+
+### 2. Secondary Cause: NVFP4 Quantized MoE Routing Instability
+
+The model is **`nvidia/Gemma-4-26B-A4B-NVFP4`** (a 4-bit NormalFloat quantized Mixture-of-Experts).
+- In 4-bit MoE models, router gating weights operate at lower numerical precision.
+- When English logits are depressed by the repetition penalty, the router's top-$k$ gating easily misroutes tokens to experts trained on multilingual web corpora, accelerating language drift.
+
+---
+
+### 3. Why It Was Added: Missing Stop Sequences in `BrainChain`
+
+Why was `repeat_penalty: 1.05` introduced originally?
+In [`src/arc_agent/chains/brain.py`](file:///e:/code-in-progress/arcgame/src/arc_agent/chains/brain.py#L147-L152):
+```python
+return self._invoke(
+    prompt,
+    temperature=0.0,
+    max_tokens=min(128, self.max_tokens),
+    image_obj=current_state.get_pil_image(),
+)
+```
+- **No `stop` sequences are passed.**
+- The model only needs ~15 tokens to output `Plan: ...\nACTION=ACTION1`.
+- With `max_tokens=128` and no stop sequence, the model was previously entering repetition loops (`ACTION=ACTION1 ACTION=ACTION1 ...`).
+- Setting `repeat_penalty: 1.05` was applied as a band-aid to stop that loop, which in turn caused the non-English language drift.
+
+---
+
+### 4. Why This Triggers `[CRITICAL LLM FAILURE]` (Halting at Step 12 & Step 41)
+
+When the foreign characters are emitted, the sanitizer in [`gemma_transformers.py`](file:///e:/code-in-progress/arcgame/src/arc_agent/models/gemma_transformers.py#L126-L141) triggers:
+```python
+clean = re.sub(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff\u0900-\u097f]+", "", clean)
+```
+1. Stripping the foreign characters leaves a fragmented sentence.
+2. Because `len(clean) >= 3` (there are still English words like `Plan:` or `State:`), line 135:
+   ```python
+   if len(clean) < _MIN_RESPONSE_CHARS:  # NOT triggered!
+       rescued = _rescue_action_from_corrupted_text(...)
+   ```
+   **is bypassed**, so the rescue logic never executes.
+3. The broken string is passed to `ARCActionMapper.parse()`, which fails to find a valid `ACTION=`.
+4. `decide_action` executes a format retry with `[FORMAT NOTICE]`, which increases the prompt length, worsening the repetition penalty.
+5. `consecutive_parse_failures` increments. Once it reaches 6, the safety halt terminates the level attempt prematurely.
+
+---
+
+### Recommended Permanent Fix
+
+1. **Disable `repetition_penalty` (set to `1.0`)**:
+   - In [`configs/default.yaml`](file:///e:/code-in-progress/arcgame/configs/default.yaml): set `repeat_penalty: 1.0`.
+   - In [`src/arc_agent/config.py`](file:///e:/code-in-progress/arcgame/src/arc_agent/config.py#L29): default `repeat_penalty: 1.0`.
+   - In [`src/arc_agent/models/gemma_transformers.py`](file:///e:/code-in-progress/arcgame/src/arc_agent/models/gemma_transformers.py#L200): default `repeat_penalty: 1.0`.
+   - Eliminating the penalty stops the artificial suppression of English tokens.
+
+2. **Add Proper Stop Sequences to `BrainChain`**:
+   - Pass `stop=["\n\n", "\nPlan:", "\nState Metadata:"]` or terminate immediately after the `ACTION=...` line is produced. This prevents repetition loops naturally without distorting token logits.
+
+3. **Improve the Sanitizer Rescue**:
+   - In [`_sanitize_llm_text`](file:///e:/code-in-progress/arcgame/src/arc_agent/models/gemma_transformers.py#L135), always attempt `_rescue_action_from_corrupted_text(text)` if foreign characters were stripped and `ACTION=` is absent or malformed in `clean`.
+   - Log `raw_decoded` whenever foreign characters are detected (`ratio > 0.05`) so you can see the exact unstripped output.
+
+Would you like me to prepare an implementation plan and apply these fixes?

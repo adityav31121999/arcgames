@@ -6,8 +6,8 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from ..core.state import ARCState
 from ..core.object_detection import is_click_only
 from ..memory.knowledge import KnowledgeCache
-from .prompts import PROMPT_ACTION, PROMPT_CLICK_ONLY_TARGET, SYSTEM_PROMPT
-from .inference import build_messages
+from .prompts import PROMPT_ACTION, PROMPT_CLICK_ONLY_TARGET, PROMPT_ITERATION_REVIEW, SYSTEM_PROMPT
+from .inference import StageResult, build_messages, invoke_stage
 from ..core.context import context_part
 
 class BrainChain:
@@ -17,6 +17,7 @@ class BrainChain:
         self.model = model
         self.max_tokens = max_tokens
         self.system_prompt = system_prompt
+        self.last_review_result = StageResult(False, error="Not run")
 
     def set_system_prompt(self, system_prompt: str) -> None:
         """Updates the system prompt for dynamic action spaces."""
@@ -128,3 +129,29 @@ Ordered action sequence:"""
 
         return self._invoke(prompt, temperature=0.0, max_tokens=256,
                             image_obj=s0_state.get_pil_image(), context=context)
+
+    def review(
+        self,
+        game_id: str,
+        level: int,
+        iteration: int,
+        s0_state: ARCState,
+        final_state: ARCState,
+        cache: KnowledgeCache,
+    ) -> str:
+        final_state_name = getattr(final_state.game_state, "name", str(final_state.game_state))
+
+        prompt = f"""{PROMPT_ITERATION_REVIEW}
+
+Iteration: {iteration}
+Final game state reached: {final_state_name}
+
+Review the attached initial/final boards and memory context. Distinguish hypotheses from evidence."""
+
+        self.last_review_result = invoke_stage(
+            self.model, self.system_prompt, prompt, stage="Brain review", max_tokens=self.max_tokens,
+            images=[("Initial board", s0_state.get_pil_image()), ("Final board", final_state.get_pil_image())],
+            context=cache.context_sections(game_id, level),
+            required_labels=("FAILURE_REASON", "RULES"), temperature=0.35,
+        )
+        return self.last_review_result.text

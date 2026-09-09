@@ -271,13 +271,13 @@ def _write_scratch_section(
 
 def maybe_append_rule(
     game_id: str,
-    debugger_verdict: str,
+    observation_note: str,
     is_repeat: bool,
     changed: Optional[bool],
     cache: KnowledgeCache,
 ) -> None:
     """Keep model interpretations as hypotheses; a verdict is not verification."""
-    if not debugger_verdict or "INFERENCE FAILED" in debugger_verdict:
+    if not observation_note or "INFERENCE FAILED" in observation_note:
         return
     # Suppress HUD step counter noise — never write these to scratchpad
     # Location alone is not evidence of HUD; retain small border interactions.
@@ -288,7 +288,7 @@ def maybe_append_rule(
     )
     _write_scratch_section(cache, game_id, "## OBSERVATIONS", observation)
     _write_scratch_section(
-        cache, game_id, "## HYPOTHESES & ASSUMPTIONS", debugger_verdict.strip()
+        cache, game_id, "## HYPOTHESES & ASSUMPTIONS", observation_note.strip()
     )
 
 

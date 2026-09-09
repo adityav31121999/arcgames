@@ -5,9 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from ..chains.brain import BrainChain
-from ..chains.debugger import DebuggerChain
 from ..chains.eye import EyeChain
-from ..chains.reviewer import ReviewerChain
 from ..chains.prompts import build_system_prompt
 from ..core.actions import ARCActionMapper, ActionSignature, is_complex_action
 from ..core.object_detection import (
@@ -31,23 +29,19 @@ from ..utils.display import render_live
 
 
 class ARCLangChainAgent:
-    """Core Agent coordinating LangChain perceptual, debugger, planner, and review chains."""
+    """Core Agent coordinating LangChain Eye and Brain chains."""
 
     def __init__(
         self,
         eye_chain: EyeChain,
-        debugger_chain: DebuggerChain,
         brain_chain: BrainChain,
-        reviewer_chain: ReviewerChain,
         resolver: GameStateResolver,
         stuck_threshold: int = 3,
         memory_root: str = "./agent_memory",
         vision_cache_dir: str = "/tmp/agent_vision",
     ):
         self.eye = eye_chain
-        self.debugger = debugger_chain
         self.brain = brain_chain
-        self.reviewer = reviewer_chain
         self.resolver = resolver
         self.stuck_threshold = stuck_threshold
         self.memory_root = memory_root
@@ -69,12 +63,8 @@ class ARCLangChainAgent:
         """Sets the system prompt across all LangChain chains."""
         if hasattr(self.eye, "set_system_prompt"):
             self.eye.set_system_prompt(system_prompt)
-        if hasattr(self.debugger, "set_system_prompt"):
-            self.debugger.set_system_prompt(system_prompt)
         if hasattr(self.brain, "set_system_prompt"):
             self.brain.set_system_prompt(system_prompt)
-        if hasattr(self.reviewer, "set_system_prompt"):
-            self.reviewer.set_system_prompt(system_prompt)
 
     def enter_level(
         self,
@@ -158,7 +148,7 @@ class ARCLangChainAgent:
         s0_state: ARCState,
         current_state: ARCState,
         valid_actions: List[Any],
-        debug_note: str,
+        observation_note: str,
         budget_context: str = "",
     ) -> Tuple[Any, Dict[str, Any], str]:
         """Decides next action using Brain chain with formatting retries and heuristics fallbacks."""
@@ -175,7 +165,7 @@ class ARCLangChainAgent:
 
         context_note = "\n".join(
             x
-            for x in [debug_note, warning, behavior_warning, sprite_highlight, f"[TRAJECTORY] {trajectory_ctx}"]
+            for x in [observation_note, warning, behavior_warning, sprite_highlight, f"[TRAJECTORY] {trajectory_ctx}"]
             if x
         )
         prohibited = self.memory.tried_signatures(state_hash)
@@ -378,7 +368,7 @@ class ARCLangChainAgent:
             final_state,
             status=f"🧠 Iteration {iteration} failed — reviewing full log & consolidating scratchpad...",
         )
-        review_text = self.reviewer.review(
+        review_text = self.brain.review(
             game_id, level, iteration, s0_state, final_state, self.cache
         )
         apply_iteration_review(self.cache, game_id, level, iteration, review_text)

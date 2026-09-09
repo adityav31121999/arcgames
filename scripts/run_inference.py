@@ -22,9 +22,7 @@ if hasattr(sys.stderr, "reconfigure"):
 from arc_agent.agent.arc_langchain_agent import ARCLangChainAgent
 from arc_agent.agent.runner import ARCRunner
 from arc_agent.chains.brain import BrainChain
-from arc_agent.chains.debugger import DebuggerChain
 from arc_agent.chains.eye import EyeChain
-from arc_agent.chains.reviewer import ReviewerChain
 from arc_agent.config import AppConfig
 from arc_agent.core.resolver import GameStateResolver
 from arc_agent.models.factory import ModelFactory
@@ -87,9 +85,7 @@ def main():
 
     # 2. Build LangChain chains
     eye_chain = EyeChain(llm, max_tokens=config.model.max_new_tokens_eye)
-    debugger_chain = DebuggerChain(llm, max_tokens=config.model.max_new_tokens_debug)
     brain_chain = BrainChain(llm, max_tokens=config.model.max_new_tokens_brain)
-    reviewer_chain = ReviewerChain(llm, max_tokens=config.model.max_new_tokens_review)
 
     # 3. Game state resolver
     try:
@@ -101,9 +97,7 @@ def main():
     # 4. Instantiate Agent & Runner
     agent = ARCLangChainAgent(
         eye_chain=eye_chain,
-        debugger_chain=debugger_chain,
         brain_chain=brain_chain,
-        reviewer_chain=reviewer_chain,
         resolver=resolver,
         stuck_threshold=config.agent.stuck_threshold,
         memory_root=config.agent.memory_root,

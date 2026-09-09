@@ -221,7 +221,7 @@ class ARCRunner:
     ) -> Tuple[ARCState, Any, int]:
         """Closed-loop perception-action-reflection step execution loop."""
         current_state = curr_state
-        debug_note = ""
+        observation_note = ""
         zero_diff_streak = 0
         step_count = start_step
         initial_completed = current_state.levels_completed
@@ -234,22 +234,19 @@ class ARCRunner:
             action_sig = self.agent.memory.trajectory[-1].action_sig
             transition = compute_transition(predecessor_state, current_state, action_sig)
             diff = get_grid_difference_text(predecessor_state.grid, current_state.grid)
-            visual = self.agent.eye.analyse_visual(game_id, s0_state, transition, diff)
-            debug_note = self.agent.debugger.validate(
-                game_id, level, s0_state, transition, diff, visual, self.agent.cache,
+            observation_note = self.agent.eye.analyse_visual(
+                game_id, s0_state, transition, diff,
                 intended_plan="Evaluate the final speculative action before replanning.",
                 world_model_block=self.agent.world_model.to_prompt_block(),
             )
-            evaluation_failed = not visual or not debug_note
-            self.last_stage_status = {
-                "vision": getattr(self.agent.eye, "last_result", None),
-                "debugger": getattr(self.agent.debugger, "last_result", None),
-            }
-            self.agent.world_model.update_from_text(visual)
-            self.agent.world_model.update_from_text(debug_note)
-            maybe_append_rule(game_id, debug_note, False, transition.changed, self.agent.cache)
+            evaluation_failed = not observation_note
+            self.last_stage_status = {"vision": getattr(self.agent.eye, "last_result", None)}
+            if not observation_note:
+                observation_note = f"Recent findings: {diff}; goal progress unknown."
+            self.agent.world_model.update_from_text(observation_note)
+            maybe_append_rule(game_id, observation_note, False, transition.changed, self.agent.cache)
             if evaluation_failed:
-                debug_note += "\n[REASSESS] Speculative transition evaluation unavailable; mechanics remain uncertain."
+                observation_note += "\n[REASSESS] Speculative transition evaluation unavailable; mechanics remain uncertain."
 
         while step_count < max_steps:
             if is_time_budget_exhausted(self.time_budget_hours):
@@ -291,8 +288,8 @@ class ARCRunner:
 
             render_live(current_state, status=f"🔄 Step {step_count + 1}/{max_steps} (Try {iteration}/{max_iterations}){budget_str} — Brain deciding next action...")
 
-            action, action_data, debug_note = self.agent.decide_action(
-                game_id, level, s0_state, current_state, current_valid_actions, debug_note, budget_context=budget_context
+            action, action_data, observation_note = self.agent.decide_action(
+                game_id, level, s0_state, current_state, current_valid_actions, observation_note, budget_context=budget_context
             )
 
             if getattr(self.agent, "consecutive_parse_failures", 0) >= 6:
@@ -324,7 +321,7 @@ class ARCRunner:
 
             diff = get_grid_difference_text(current_state.grid, next_state.grid, action_name=action_name)
             visual_analysis = ""
-            debug_note = ""
+            observation_note = ""
 
             # Terminal/progress checks precede expensive model evaluation.
             if next_state.levels_completed > initial_completed or self.agent.resolver.is_terminal(next_state.game_state):
@@ -346,38 +343,32 @@ class ARCRunner:
                 else "Before/after comparison unavailable; effect unknown."
             )
             if full_evaluation:
-                visual_analysis = self.agent.eye.analyse_visual(game_id, s0_state, next_transition, diff)
-                debug_note = self.agent.debugger.validate(
-                    game_id, level, s0_state, next_transition, diff, visual_analysis,
-                    self.agent.cache, budget_context=budget_context,
+                visual_analysis = self.agent.eye.analyse_visual(
+                    game_id, s0_state, next_transition, diff,
                     intended_plan=intended_plan, expected_effect=expected_effect,
                     world_model_block=world_model_before,
                 )
-                evaluation_failed = not visual_analysis or not debug_note
-                self.last_stage_status = {
-                    "vision": getattr(self.agent.eye, "last_result", None),
-                    "debugger": getattr(self.agent.debugger, "last_result", None),
-                }
+                observation_note = visual_analysis
+                evaluation_failed = not visual_analysis
+                self.last_stage_status = {"vision": getattr(self.agent.eye, "last_result", None)}
             else:
-                debug_note = f"Recent findings: {observation}"
+                observation_note = f"Recent findings: {observation}"
 
             # Only validated stage text enters beliefs. On failure retain measured facts.
-            if visual_analysis:
-                self.agent.world_model.update_from_text(visual_analysis)
-            if debug_note:
-                self.agent.world_model.update_from_text(debug_note)
+            if observation_note:
+                self.agent.world_model.update_from_text(observation_note)
             else:
-                debug_note = f"Recent findings: {observation}"
-                self.agent.world_model.update_from_text(debug_note)
+                observation_note = f"Recent findings: {observation}"
+                self.agent.world_model.update_from_text(observation_note)
             if evaluation_failed:
-                debug_note += "\n[REASSESS] Visual evaluation unavailable; treat mechanics as uncertain and re-evaluate next step."
+                observation_note += "\n[REASSESS] Visual evaluation unavailable; treat mechanics as uncertain and re-evaluate next step."
 
             is_visited_loop = next_state.state_hash in visited_hashes
             visited_hashes.add(next_state.state_hash)
             if is_visited_loop:
-                debug_note += "\n[WARNING] Action led back to a visited state. Try a different direction."
+                observation_note += "\n[WARNING] Action led back to a visited state. Try a different direction."
 
-            maybe_append_rule(game_id, debug_note, is_repeat_state, next_transition.changed, self.agent.cache)
+            maybe_append_rule(game_id, observation_note, is_repeat_state, next_transition.changed, self.agent.cache)
 
             status_line = (
                 f"🎮 {game_id} | Lvl {level} | Step {step_count}/{max_steps} (Try {iteration}/{max_iterations}){budget_str} | "
@@ -388,7 +379,7 @@ class ARCRunner:
             if is_repeat_state:
                 status_line += " | 🔁 seen before"
 
-            reasoning_summary = f"[{action_name}] {diff}\n[EYE] {visual_analysis}\n[DEBUG] {debug_note}"
+            reasoning_summary = f"[{action_name}] {diff}\n[EYE] {visual_analysis}\n[OBSERVATION] {observation_note}"
             render_live(next_state, status=status_line, reasoning=reasoning_summary)
 
             self.agent.log_action(

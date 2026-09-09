@@ -145,14 +145,10 @@ def test_smart_fallback_targets_detected_objects(tmp_path):
     mock_model = MockChatModel()
     brain = BrainChain(mock_model)
     from arc_agent.chains.eye import EyeChain
-    from arc_agent.chains.debugger import DebuggerChain
-    from arc_agent.chains.reviewer import ReviewerChain
 
     agent = ARCLangChainAgent(
         eye_chain=EyeChain(mock_model),
-        debugger_chain=DebuggerChain(mock_model),
         brain_chain=brain,
-        reviewer_chain=ReviewerChain(mock_model),
         resolver=GameStateResolver(),
         memory_root=str(tmp_path / "memory"),
         vision_cache_dir=str(tmp_path / "vision"),

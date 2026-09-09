@@ -28,9 +28,7 @@ class ModelConfig(BaseModel):
     top_p: float = Field(default=0.95)
     repeat_penalty: float = Field(default=1.0)
     max_new_tokens_eye: int = Field(default=256)
-    max_new_tokens_debug: int = Field(default=96)
     max_new_tokens_brain: int = Field(default=128)
-    max_new_tokens_review: int = Field(default=256)
 
 
 class AgentConfig(BaseModel):

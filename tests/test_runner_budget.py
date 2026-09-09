@@ -8,9 +8,7 @@ import pytest
 from arc_agent.agent.runner import ARCRunner, get_max_steps_for_level
 from arc_agent.agent.arc_langchain_agent import ARCLangChainAgent
 from arc_agent.chains.brain import BrainChain
-from arc_agent.chains.debugger import DebuggerChain
 from arc_agent.chains.eye import EyeChain
-from arc_agent.chains.reviewer import ReviewerChain
 from arc_agent.core.resolver import GameStateResolver
 from arc_agent.models.gemma_transformers import MockChatModel
 
@@ -80,9 +78,7 @@ def _build_test_agent(tmp_path):
     mock_llm = MockChatModel()
     return ARCLangChainAgent(
         eye_chain=EyeChain(mock_llm),
-        debugger_chain=DebuggerChain(mock_llm),
         brain_chain=BrainChain(mock_llm),
-        reviewer_chain=ReviewerChain(mock_llm),
         resolver=GameStateResolver(),
         stuck_threshold=10,
         memory_root=str(tmp_path / "memory"),

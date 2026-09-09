@@ -14,9 +14,7 @@ model:
   top_p: 0.95
   repeat_penalty: 1.0
   max_new_tokens_eye: 256
-  max_new_tokens_debug: 96
   max_new_tokens_brain: 128
-  max_new_tokens_review: 256
 
 agent:
   stuck_threshold: 3

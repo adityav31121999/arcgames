@@ -8,7 +8,6 @@ import pytest
 
 from arc_agent.agent.runner import ARCRunner
 from arc_agent.chains.eye import EyeChain
-from arc_agent.chains.debugger import DebuggerChain
 from arc_agent.chains.inference import StageResult
 from arc_agent.core.actions import ActionSignature
 from arc_agent.core.diff import detect_real_change, get_hud_pixels, register_hud_pixel
@@ -85,15 +84,14 @@ def test_speculative_handoff_evaluates_before_brain_replans(agent):
                        max_iterations_per_level=1)
     events = Mock()
     events.attach_mock(Mock(wraps=agent.eye.analyse_visual), "vision")
-    events.attach_mock(Mock(wraps=agent.debugger.validate), "debugger")
     events.attach_mock(Mock(wraps=agent.decide_action), "decide")
     agent.eye.analyse_visual = events.vision
-    agent.debugger.validate = events.debugger
     agent.decide_action = events.decide
     current, _, steps = runner.play_level("handoff_eval", 1, env, env.obs(), env.action_space,
                                          max_steps=3, is_first_level_of_game=True)
     assert steps == current.ticks == 3
-    assert [call[0] for call in events.mock_calls[:3]] == ["vision", "debugger", "decide"]
+    assert [call[0] for call in events.mock_calls[:2]] == ["vision", "decide"]
+    assert not hasattr(agent, "debugger") and not hasattr(agent, "reviewer")
     transition = events.vision.call_args.args[2]
     assert transition.previous.raw_obs.ticks == 1
     assert transition.current.raw_obs.ticks == 2
@@ -148,12 +146,10 @@ def test_fast_mode_reassesses_stuck_and_passes_action_intent(agent):
     env = Environment()
     runner = ARCRunner(agent, fast_step_eval=True, max_iterations_per_level=1)
     agent.eye.analyse_visual = Mock(wraps=agent.eye.analyse_visual)
-    agent.debugger.validate = Mock(wraps=agent.debugger.validate)
     runner.play_level("stuck", 1, env, env.obs(), env.action_space, max_steps=4, is_first_level_of_game=True)
     assert agent.eye.analyse_visual.call_count >= 1
-    assert agent.debugger.validate.call_count >= 1
     # First move carries model intent; later fallback moves must not inherit it.
-    for call in agent.debugger.validate.call_args_list:
+    for call in agent.eye.analyse_visual.call_args_list:
         assert "intended_plan" in call.kwargs
         assert "expected_effect" in call.kwargs
         assert "world_model_block" in call.kwargs
@@ -162,10 +158,10 @@ def test_fast_mode_reassesses_stuck_and_passes_action_intent(agent):
 def test_fast_mode_periodically_checks_novel_changes(agent):
     env = Environment(changing=True)
     runner = ARCRunner(agent, fast_step_eval=True, full_eval_interval=2, max_iterations_per_level=1)
-    agent.debugger.validate = Mock(wraps=agent.debugger.validate)
+    agent.eye.analyse_visual = Mock(wraps=agent.eye.analyse_visual)
     runner.play_level("periodic", 1, env, env.obs(), env.action_space, max_steps=4, is_first_level_of_game=True)
-    assert agent.debugger.validate.call_count == 2
-    first = agent.debugger.validate.call_args_list[0].kwargs
+    assert agent.eye.analyse_visual.call_count == 2
+    first = agent.eye.analyse_visual.call_args_list[0].kwargs
     assert first["intended_plan"] == "Test upward movement."
     assert first["expected_effect"] == "Player moves upward."
 
@@ -218,12 +214,11 @@ def test_vision_receives_before_after_and_action_coordinates():
     assert eye.last_result.ok
 
 
-def test_debugger_receives_explicit_prediction_and_both_boards(tmp_path):
+def test_eye_receives_explicit_prediction_and_both_boards(tmp_path):
     initial, transition = make_transition()
     model = Mock()
     model.invoke.return_value = SimpleNamespace(content="Recent findings: Prediction supported.\nOpen questions: Is the rule general?\nPlan: Repeat elsewhere.")
-    debugger = DebuggerChain(model)
-    debugger.validate("visual", 1, initial, transition, "2 cells", cache=KnowledgeCache(tmp_path),
+    EyeChain(model).analyse_visual("visual", initial, transition, "2 cells",
                       intended_plan="Test switch", expected_effect="Door becomes green")
     parts = model.invoke.call_args.args[0][-1].content
     assert "Door becomes green" in parts[0]["text"]
@@ -257,9 +252,31 @@ def test_failed_vision_is_not_saved_as_invented_mechanics(tmp_path):
 def test_failed_evaluation_cannot_pollute_world_model(agent):
     env = Environment(changing=True)
     agent.eye.analyse_visual = Mock(return_value="")
-    agent.debugger.validate = Mock(return_value="")
     runner = ARCRunner(agent, fast_step_eval=True, full_eval_interval=1, max_iterations_per_level=1)
     runner.play_level("failure", 1, env, env.obs(), env.action_space, max_steps=2, is_first_level_of_game=True)
     assert "Board changed" in agent.world_model.recent_findings
     assert "INFERENCE FAILED" not in agent.world_model.to_prompt_block()
     assert agent.eye.analyse_visual.call_count == 2
+
+
+def test_eye_observation_feeds_next_brain_decision(agent):
+    env = Environment(changing=True)
+    observation = "Recent findings: Blue token moved right.\nOpen questions: Goal unknown."
+    agent.eye.analyse_visual = Mock(return_value=observation)
+    agent.decide_action = Mock(wraps=agent.decide_action)
+    runner = ARCRunner(agent, speculative_plan_max_steps=0, fast_step_eval=False,
+                       max_iterations_per_level=1)
+    runner.play_level("eye_brain", 1, env, env.obs(), env.action_space,
+                      max_steps=2, is_first_level_of_game=True)
+    assert observation in agent.decide_action.call_args_list[1].args[5]
+    assert agent.eye.analyse_visual.call_count == 2
+    assert set(runner.last_stage_status) == {"vision"}
+
+
+def test_failed_attempt_review_uses_brain_and_saves_hypotheses(agent):
+    initial, transition = make_transition()
+    agent.brain.review = Mock(return_value="FAILURE_REASON: Repeated moves\nRULES:\n- Test another direction")
+    agent.review_failed_iteration("visual", 1, 1, initial, transition.current)
+    agent.brain.review.assert_called_once()
+    assert "Test another direction" in agent.cache.scratch("visual")
+    assert "REVIEW HYPOTHESES (UNVERIFIED)" in agent.cache.scratch("visual")

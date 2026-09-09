@@ -11,7 +11,6 @@ import numpy as np
 import pytest
 
 from arc_agent.chains.brain import BrainChain
-from arc_agent.chains.debugger import DebuggerChain
 from arc_agent.chains.eye import EyeChain
 from arc_agent.config import AppConfig, ModelConfig
 from arc_agent.core.actions import ActionSignature, ARCActionMapper
@@ -304,9 +303,7 @@ def test_no_raw_hashes_in_context(tmp_path):
     mock_model = MockChatModel()
     agent = ARCLangChainAgent(
         eye_chain=EyeChain(mock_model),
-        debugger_chain=DebuggerChain(mock_model),
         brain_chain=BrainChain(mock_model),
-        reviewer_chain=None,
         resolver=GameStateResolver(),
         memory_root=str(tmp_path / "memory"),
     )

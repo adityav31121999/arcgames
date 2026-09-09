@@ -8,15 +8,12 @@ from .prompts import (
     PROMPT_ASSUME,
     PROMPT_COMP_ASSUME,
     PROMPT_ANALYSE_VISUAL,
-    PROMPT_STATE_DEBUG,
     PROMPT_ACTION,
     PROMPT_CLICK_ONLY_TARGET,
     PROMPT_ITERATION_REVIEW,
 )
 from .eye import EyeChain
-from .debugger import DebuggerChain
 from .brain import BrainChain
-from .reviewer import ReviewerChain
 
 __all__ = [
     "ACTION_DESCRIPTIONS",
@@ -26,12 +23,9 @@ __all__ = [
     "PROMPT_ASSUME",
     "PROMPT_COMP_ASSUME",
     "PROMPT_ANALYSE_VISUAL",
-    "PROMPT_STATE_DEBUG",
     "PROMPT_ACTION",
     "PROMPT_CLICK_ONLY_TARGET",
     "PROMPT_ITERATION_REVIEW",
     "EyeChain",
-    "DebuggerChain",
     "BrainChain",
-    "ReviewerChain",
 ]
