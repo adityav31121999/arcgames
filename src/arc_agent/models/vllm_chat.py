@@ -65,7 +65,12 @@ def load_vllm(config, model_id):
     try:
         from vllm import LLM
     except ImportError as exc:
-        raise RuntimeError("Install the compatible vLLM wheelhouse before importing torch; restart the Kaggle session.") from exc
+        raise RuntimeError(
+            f"vLLM dependency import failed before model loading: {type(exc).__name__}: {exc}. "
+            "After installing wheels, restart the Python kernel and continue at the runtime cell "
+            "without rerunning installation. If a fresh Python process also fails, repair the "
+            "dependency installation using the resolved wheelhouse."
+        ) from exc
     from transformers import AutoProcessor
     processor = AutoProcessor.from_pretrained(model_id, local_files_only=True,
                                               trust_remote_code=config.trust_remote_code)
