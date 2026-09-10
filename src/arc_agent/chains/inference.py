@@ -16,6 +16,12 @@ class StageResult:
     attempts: int = 0
 
 
+def normalize_labels(text):
+    # Accept presentation-only Markdown without relaxing field requirements.
+    text = re.sub(r"(?m)^[ \t]*(?:#{1,6}[ \t]+)?(?:[-*][ \t]+)?\*\*([^*\n:]+):?\*\*[ \t]*:?[ \t]*", r"\1: ", text)
+    return text
+
+
 def build_messages(system: str, prompt: str, images=(), context=()):
     parts = [{"type": "text", "text": prompt}]
     for label, image in images:
@@ -30,6 +36,7 @@ def build_messages(system: str, prompt: str, images=(), context=()):
 def invoke_stage(model, system: str, prompt: str, *, stage: str, max_tokens: int,
                  required_labels=(), images=(), context=(), **kwargs: Any) -> StageResult:
     error = ""
+    kwargs.setdefault("raw_output", True)
     for attempt in range(1, 3):
         reminder = ""
         if attempt > 1:
@@ -37,9 +44,9 @@ def invoke_stage(model, system: str, prompt: str, *, stage: str, max_tokens: int
         try:
             response = model.invoke(
                 build_messages(system, prompt + reminder, images, context),
-                max_tokens=max_tokens, **kwargs,
+                max_tokens=max_tokens * (2 if attempt > 1 and "Thinking budget exhausted" in error else 1), **kwargs,
             )
-            text = str(response.content).strip()
+            text = normalize_labels(str(response.content).strip())
             valid = bool(text) and "INFERENCE FAILED" not in text
             for label in required_labels:
                 # RULES is the only block field; other fields need an inline value.
@@ -48,7 +55,7 @@ def invoke_stage(model, system: str, prompt: str, *, stage: str, max_tokens: int
                 valid = valid and bool(re.search(pattern, text))
             if valid:
                 return StageResult(True, text=text, attempts=attempt)
-            error = "Empty or malformed labeled response"
+            error = "Empty or malformed labeled response; final answer preview=" + repr(text[:500])
         except ContextBudgetError as exc:
             # Optional context was already compacted by the wrapper; retrying cannot help.
             return StageResult(False, error=f"{stage}: {exc}", attempts=attempt)

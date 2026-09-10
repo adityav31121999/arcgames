@@ -14,6 +14,7 @@ from .prompts import (
 )
 from .eye import EyeChain
 from .brain import BrainChain
+from .debugger import DebuggerChain
 
 __all__ = [
     "ACTION_DESCRIPTIONS",
@@ -28,4 +29,5 @@ __all__ = [
     "PROMPT_ITERATION_REVIEW",
     "EyeChain",
     "BrainChain",
+    "DebuggerChain",
 ]

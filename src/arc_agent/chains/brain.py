@@ -7,7 +7,7 @@ from ..core.state import ARCState
 from ..core.object_detection import is_click_only
 from ..memory.knowledge import KnowledgeCache
 from .prompts import PROMPT_ACTION, PROMPT_CLICK_ONLY_TARGET, PROMPT_ITERATION_REVIEW, SYSTEM_PROMPT
-from .inference import StageResult, build_messages, invoke_stage
+from .inference import StageResult, build_messages, invoke_stage, normalize_labels
 from ..core.context import context_part
 from ..core.actions import canonical_action_name
 
@@ -22,6 +22,7 @@ class BrainChain:
         self.last_review_result = StageResult(False, error="Not run")
         self.enable_thinking = enable_thinking
         self.review_max_tokens = review_max_tokens
+        self.last_error = ""
 
     def set_system_prompt(self, system_prompt: str) -> None:
         """Updates the system prompt for dynamic action spaces."""
@@ -32,16 +33,19 @@ class BrainChain:
         try:
             invoke_kwargs = {
                 "temperature": temperature,
-                "max_tokens": max_tokens,
+                "max_tokens": max_tokens * (2 if "Thinking budget exhausted" in self.last_error else 1),
                 "enable_thinking": self.enable_thinking,
+                "raw_output": True,
             }
             if stop:
                 invoke_kwargs["stop"] = stop
             if action_response:
                 invoke_kwargs["action_response"] = True
             response = self.model.invoke(messages, **invoke_kwargs)
-            return str(response.content).strip()
+            self.last_error = ""
+            return normalize_labels(str(response.content).strip())
         except Exception as e:
+            self.last_error = f"{type(e).__name__}: {e}"
             return f"[BRAIN INFERENCE FAILED: {type(e).__name__}: {e}]"
 
     def decide_action(
@@ -141,7 +145,7 @@ Valid Actions: {valid_names}
 
 Ordered action sequence:"""
 
-        return self._invoke(prompt, temperature=0.0, max_tokens=256,
+        return self._invoke(prompt, temperature=0.0, max_tokens=self.max_tokens,
                             image_obj=s0_state.get_pil_image(), context=context)
 
     def review(

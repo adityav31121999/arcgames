@@ -125,6 +125,7 @@ class KnowledgeCache:
             sections.append(context_part(heading, body, priority, keep))
         if level is not None:
             sections.append(context_part("Recent Actions", self.actions_log(game_id, level), 4))
+            sections.append(context_part("Experiment evidence", read_text(self.memory_root / str(game_id) / f"experiments_level_{level}.md"), 1))
         if include_prior:
             sections.append(context_part("Prior Level Analyses", self.ostate(game_id), 5))
         return sections
@@ -132,6 +133,9 @@ class KnowledgeCache:
     def archive(self, game_id: str, label: str, text: str) -> None:
         """Retain full updates even when the working scratchpad consolidates entries."""
         append_text(self.memory_root / str(game_id) / "memory_history.md", f"## {label}\n{text}")
+
+    def append_experiment(self, game_id: str, level: int, text: str) -> None:
+        append_text(self.memory_root / str(game_id) / f"experiments_level_{level}.md", text)
 
     def append_action_log(self, game_id: str, level: int, text: str) -> None:
         key = (game_id, level)

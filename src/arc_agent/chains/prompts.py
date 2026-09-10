@@ -104,7 +104,9 @@ PROMPT_COMP_ASSUME = (
 
 PROMPT_ANALYSE_VISUAL = (
     "Analyze the visual change caused by the last action using the pixel diff bounding box in English.\n"
-    "Use these labeled fields: Recent findings: <observed changes only>; Open questions: <uncertain cause or goal progress>. Put each field on its own line. A changed board alone does not prove progress."
+    "Use these labeled fields: Recent findings: <observed changes only>; Open questions: <uncertain cause or goal progress>."
+    "Put each field on its own line. A changed board alone does not prove progress."
+    "Check for any new objects, colors, or shapes. If the board is unchanged, note that as well."
 )
 
 PROMPT_ACTION = (
@@ -122,10 +124,12 @@ PROMPT_CLICK_ONLY_TARGET = (
 PROMPT_ITERATION_REVIEW = (
     "An attempt at this level just ended. Review the actions log and knowledge store in English.\n"
     "1) Identify the exploration flaw (e.g. loops, dead ends, unclicked objects).\n"
-    "2) Propose navigation hypotheses with supporting action/step references and counterexamples; do not claim verification from your own verdict.\n"
+    "2) Identify the most likely cause of failure (e.g. misidentified object, untested prerequisite, misapplied rule).\n"
+    "3) Check which path was most promising and why it failed. Which Region was free to move and which was blocking? \n"
+    "4) Propose a new plan to test the most likely cause of failure, including a specific action sequence.\n"
+    "5) Propose navigation hypotheses with supporting action/step references and counterexamples; do not claim verification from your own verdict.\n"
     "Respond strictly in this format:\n"
     "FAILURE_REASON: <one sentence on search strategy>\n"
     "RULES:\n"
-    "- <candidate rule and supporting steps>\n"
     "- <candidate rule and supporting steps>\n"
 )

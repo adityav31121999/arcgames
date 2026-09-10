@@ -43,9 +43,15 @@ class ARCLangChainAgent:
         stuck_threshold: int = 3,
         memory_root: str = "./agent_memory",
         vision_cache_dir: str = "/tmp/agent_vision",
+        debugger_chain=None,
+        halt_on_invalid_decision: bool = False,
     ):
         self.eye = eye_chain
         self.brain = brain_chain
+        if debugger_chain is not None:
+            self.debugger = debugger_chain
+        self.halt_on_invalid_decision = halt_on_invalid_decision
+        self.decision_failed = False
         self.resolver = resolver
         self.stuck_threshold = stuck_threshold
         self.memory_root = memory_root
@@ -66,6 +72,8 @@ class ARCLangChainAgent:
 
     def set_system_prompt(self, system_prompt: str) -> None:
         """Sets the system prompt across all LangChain chains."""
+        if hasattr(self, "debugger"):
+            self.debugger.set_system_prompt(system_prompt)
         if hasattr(self.eye, "set_system_prompt"):
             self.eye.set_system_prompt(system_prompt)
         if hasattr(self.brain, "set_system_prompt"):
@@ -210,6 +218,7 @@ class ARCLangChainAgent:
         if action is not None:
             self._record_action_intent(raw)
             self.persist_world_model(game_id)
+            self.decision_failed = False
             self.consecutive_parse_failures = 0
             return action, action_data, context_note
 
@@ -237,6 +246,7 @@ class ARCLangChainAgent:
         if action is not None:
             self._record_action_intent(raw_retry)
             self.persist_world_model(game_id)
+            self.decision_failed = False
             self.consecutive_parse_failures = 0
             return action, action_data, context_note
 
@@ -244,14 +254,19 @@ class ARCLangChainAgent:
         # from genuine LLM corruption / empty response
         raw_valid_syntax, _ = ARCActionMapper.parse(raw_retry or raw, allowed_actions, grid_shape, prohibited=None)
         if raw_valid_syntax is not None:
+            self.decision_failed = False
             self.consecutive_parse_failures = 0
         else:
             self.consecutive_parse_failures += 1
+            self.decision_failed = self.halt_on_invalid_decision
+            diagnostic = f"Brain decision rejected after retry. Final response: {raw_retry or raw}"
+            self.cache.archive(game_id, "Decision inference failure", diagnostic)
+            print(diagnostic[:1000])
 
         if self.consecutive_parse_failures >= 6:
             print(
                 f"\n🚨 [CRITICAL LLM FAILURE] Model produced {self.consecutive_parse_failures} consecutive empty or unparseable responses! "
-                "The LLM is unresponsive or outputting corrupted tokens."
+                "No valid action was parsed. Inspect memory_history.md for the actual inference/format error."
             )
 
         return self._safe_fallback(allowed_actions, state_hash, grid_shape, context_note, current_grid=current_state.grid)
@@ -396,10 +411,16 @@ class ARCLangChainAgent:
             final_state,
             status=f"🧠 Iteration {iteration} failed — reviewing full log & consolidating scratchpad...",
         )
-        review_text = self.brain.review(
+        reviewer = getattr(self, "debugger", self.brain)
+        review_text = reviewer.review(
             game_id, level, iteration, s0_state, final_state, self.cache,
             world_model_block=self.world_model.to_prompt_block(),
         )
+        if not review_text:
+            result = getattr(reviewer, "last_review_result", None)
+            self.cache.archive(game_id, f"Review unavailable, try {iteration}",
+                               getattr(result, "error", "No validated review returned"))
+            return
         apply_iteration_review(self.cache, game_id, level, iteration, review_text)
         self.world_model.update_from_text(review_text)
         self.persist_world_model(game_id)

@@ -292,7 +292,7 @@ class ARCRunner:
                 game_id, level, s0_state, current_state, current_valid_actions, observation_note, budget_context=budget_context
             )
 
-            if getattr(self.agent, "consecutive_parse_failures", 0) >= 6:
+            if getattr(self.agent, "decision_failed", False) or getattr(self.agent, "consecutive_parse_failures", 0) >= 6:
                 print(
                     f"\n⛔ [HALT ON MODEL FAILURE] Aborting Level {level} step loop at Step {step_count + 1}: "
                     f"LLM produced {self.agent.consecutive_parse_failures} consecutive empty or unparseable outputs. "
@@ -329,7 +329,7 @@ class ARCRunner:
                                       current_state.state_hash, next_state.state_hash)
                 return next_state, next_state.game_state, step_count
 
-            fast_mode = self.fast_step_eval or os.getenv("FAST_STEP_EVAL", "false").lower() == "true"
+            fast_mode = self.fast_step_eval
             zero_diff_streak = zero_diff_streak + 1 if next_transition.changed is False else 0
             full_evaluation = (
                 not fast_mode or next_transition.changed is None or evaluation_failed
@@ -353,6 +353,17 @@ class ARCRunner:
                 self.last_stage_status = {"vision": getattr(self.agent.eye, "last_result", None)}
             else:
                 observation_note = f"Recent findings: {observation}"
+
+            debugger = getattr(self.agent, "debugger", None)
+            if debugger is not None:
+                audit = debugger.analyse(current_state, next_state, next_transition.action_sig,
+                    expected_effect, f"{diff}\n{observation_note}", world_model_before,
+                    repeated=is_repeat_state or is_repeat_transition)
+                self.last_stage_status["debugger"] = debugger.last_result
+                if audit:
+                    observation_note += "\n" + audit
+                else:
+                    self.agent.cache.archive(game_id, f"Debugger failure step {step_count}", debugger.last_result.error)
 
             # Only validated stage text enters beliefs. On failure retain measured facts.
             if observation_note:
@@ -394,10 +405,11 @@ class ARCRunner:
             if next_state.levels_completed > initial_completed or self.agent.resolver.is_terminal(next_state.game_state):
                 return next_state, next_state.game_state, step_count
 
-            evidence = " ".join(observation_note.split())
-            self.agent.cache.append_action_log(game_id, level,
-                f"\nStep {step_count} evidence: action={next_transition.action_sig}; "
-                f"prediction={expected_effect or 'unknown'}; observed={evidence}\n")
+            self.agent.cache.append_experiment(game_id, level,
+                f"\n### Try {iteration}, step {step_count}\n\n"
+                f"Action: {next_transition.action_sig}\n\n"
+                f"Prediction: {expected_effect or 'unknown'}\n\n"
+                f"Measured change: {diff}\n\n{observation_note}\n")
             self.agent.persist_world_model(game_id)
             current_state = next_state
 
@@ -472,6 +484,9 @@ class ARCRunner:
                 max_iterations=iterations_limit,
             )
             total_steps += attempt_steps
+            if getattr(self.agent, "decision_failed", False) or self.agent.consecutive_parse_failures >= 6:
+                print("Stopping remaining retries: decision inference failed; see memory_history.md.")
+                break
 
             if (final_state.levels_completed > s0_state.levels_completed
                     or self.agent.resolver.is_win(state) or self.agent.resolver.is_level_up(state)):

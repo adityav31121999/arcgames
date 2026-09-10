@@ -15,6 +15,7 @@ from .gemma_transformers import GemmaTransformersChatModel, _sanitize_llm_text
 class VLLMChatModel(GemmaTransformersChatModel):
     engine: Any = Field(default=None)
     thinking_active: bool = False
+    last_generation_info: dict = Field(default_factory=dict)
 
     @property
     def _llm_type(self):
@@ -52,11 +53,18 @@ class VLLMChatModel(GemmaTransformersChatModel):
         result = self.engine.chat(chat, sampling_params=params, use_tqdm=False,
                                   chat_template_kwargs={"enable_thinking": self.thinking_active})
         raw = result[0].outputs[0].text.strip()
+        output = result[0].outputs[0]
+        self.last_generation_info = {
+            "finish_reason": getattr(output, "finish_reason", None),
+            "generated_tokens": len(getattr(output, "token_ids", []) or []),
+            "max_tokens": reserve,
+            "thinking_enabled": self.thinking_active,
+        }
         if self.thinking_active:
             # Gemma's thought channel is internal deliberation, not an action or belief update.
             # A budget exhausted inside that channel must never be parsed as a decision.
             if "<channel|>" not in raw and ("<|channel>" in raw or getattr(result[0].outputs[0], "finish_reason", None) == "length"):
-                raise RuntimeError("Thinking budget exhausted before a final answer; increase Brain token budget.")
+                raise RuntimeError(f"Thinking budget exhausted before a final answer: {self.last_generation_info}")
             if "<channel|>" in raw:
                 raw = raw.rsplit("<channel|>", 1)[1]
             raw = re.sub(r"<\|[^>]*>|<[^<\s]*\|>", "", raw).strip()
