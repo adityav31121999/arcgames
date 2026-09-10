@@ -2,7 +2,7 @@
 # Use a wheelhouse whose vLLM build supports Gemma 4 and ModelOpt NVFP4.
 # Let vLLM resolve its required torch/transformers versions together.
 vllm
-nvidia-cuda-nvcc
+cuda-toolkit[nvcc]
 langchain-core
 pydantic
 pyyaml

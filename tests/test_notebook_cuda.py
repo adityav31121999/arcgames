@@ -78,3 +78,40 @@ def test_other_gpu_keeps_existing_environment(configure):
     ns["torch"].cuda.get_device_capability = lambda _: (9, 0)
     fn([])
     assert not ns["os"].environ
+
+
+def test_mismatched_headers_skip_to_matching_toolkit(configure, tmp_path, capsys):
+    fn, ns = configure
+    bad, good = [toolkit(tmp_path, name) for name in ("mismatch", "matched")]
+    calls = []
+
+    def check_output(command, **kwargs):
+        calls.append(command)
+        if "--version" in command:
+            return "release 13.0,"
+        probe = Path(command[-1]).read_text()
+        assert "__CUDACC_VER_MINOR__" in probe and "CUDART_VERSION" in probe
+        assert command[1:4] == ["-E", "-isystem", str(Path(command[0]).parent.parent / "include")]
+        if Path(command[0]).parent.parent == bad:
+            raise subprocess.CalledProcessError(1, command, output="CUDA compiler and CUDA toolkit headers are incompatible")
+        return ""
+
+    ns["subprocess"].check_output = check_output
+    fn([bad, good])
+    assert ns["os"].environ["CUDA_HOME"] == str(good)
+    assert "headers are incompatible" in capsys.readouterr().out
+    assert len(calls) == 4
+
+
+def test_no_matching_headers_fails_before_selecting_toolkit(configure, tmp_path):
+    fn, ns = configure
+
+    def check_output(command, **kwargs):
+        if "--version" in command:
+            return "release 13.2,"
+        raise subprocess.CalledProcessError(1, command, output="CUDA compiler and CUDA toolkit headers are incompatible")
+
+    ns["subprocess"].check_output = check_output
+    with pytest.raises(RuntimeError, match="matching major/minor"):
+        fn([toolkit(tmp_path, "mismatch")])
+    assert "CUDA_HOME" not in ns["os"].environ

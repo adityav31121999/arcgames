@@ -26,7 +26,7 @@ def download_vllm_wheels(output_dir=None, vllm_requirement="vllm", extra_wheel_d
 
     # Resolve everything together. vLLM supplies torch/transformers constraints.
     # NVFP4 FlashInfer JIT also needs the compiler and CUDA headers at runtime.
-    packages = [vllm_requirement, "nvidia-cuda-nvcc", "langchain-core", "pydantic", "pyyaml",
+    packages = [vllm_requirement, "cuda-toolkit[nvcc]", "langchain-core", "pydantic", "pyyaml",
                 "pillow", "numpy", "matplotlib", "arc-agi", "arcengine"]
     (out / "requirements.in").write_text("\n".join(packages) + "\n", encoding="utf-8")
     command = [sys.executable, "-m", "pip", "download", "--only-binary=:all:",
