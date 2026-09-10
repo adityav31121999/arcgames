@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple
 import numpy as np
 
-from ..core.actions import ActionSignature, is_complex_action
+from ..core.actions import canonical_action_name, ActionSignature, is_complex_action
 from ..core.diff import get_gameplay_grid
 
 
@@ -86,9 +86,9 @@ class TrajectoryMemory:
         min_x, max_x, min_y, max_y = self.sprite_box
         return (
             f"\n[SPRITE NAVIGATION HIGHLIGHT] Active shifts have historically occurred near "
-            f"bounding box X=[{min_x}, {max_x}], Y=[{min_y}, {max_y}]. This is likely your controllable "
-            f"cursor/sprite. Focus spatial references and coordinate moves on this active window! "
-            f"Large, static background colored regions are terrain obstacles and will not shift."
+            f"bounding box X=[{min_x}, {max_x}], Y=[{min_y}, {max_y}]. "
+            f"This union can include multiple objects and status indicators; it does not identify a player. "
+            f"Static regions have unknown roles. Only click actions take coordinates."
         )
 
     def record_transition(
@@ -206,14 +206,14 @@ class TrajectoryMemory:
         allowed = [
             a
             for a in valid_actions
-            if is_complex_action(a) or getattr(a, "name", str(a)).upper() not in tried_simple_names
+            if is_complex_action(a) or canonical_action_name(a) not in tried_simple_names
         ]
 
         osc_target = self.oscillation_target()
         if osc_target is not None:
 
             def _leads_to_oscillation(a: Any) -> bool:
-                name = getattr(a, "name", str(a)).upper()
+                name = canonical_action_name(a)
                 for sig in tried:
                     if sig.name != name:
                         continue
@@ -237,7 +237,7 @@ class TrajectoryMemory:
                     trimmed = [
                         a
                         for a in allowed
-                        if getattr(a, "name", str(a)).upper() != first_act_name.upper()
+                        if canonical_action_name(a) != first_act_name.upper()
                     ]
                     if trimmed:
                         allowed = trimmed

@@ -140,7 +140,7 @@ def test_brain_passes_stops_to_model(tmp_path, actions):
     assert kwargs["stop"] == ["[END_ACTION]"]
     assert kwargs["action_response"] is True
     assert kwargs["temperature"] == 0.0
-    assert kwargs["max_tokens"] == 128
+    assert kwargs["max_tokens"] == 256
     assert not any(stop in response for stop in kwargs["stop"])
 
 

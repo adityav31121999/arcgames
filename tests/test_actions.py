@@ -77,6 +77,14 @@ def test_parse_plan():
     assert plan[2][0] == Action.ACTION2
 
 
+def test_numeric_movement_does_not_inherit_click_coordinates():
+    action, data = ARCActionMapper.parse("Plan: Try a tile at (33,32).\nACTION=1 X=33 Y=32", [1, 2, 6], (64, 64))
+    assert action == 1 and data == {}
+    assert ActionSignature.from_action(1, {"x": 33, "y": 32}) == ActionSignature("ACTION1")
+    action, data = ARCActionMapper.parse("ACTION=6 X=33 Y=32", [1, 2, 6], (64, 64))
+    assert action == 6 and data == {"x": 33, "y": 32}
+
+
 def test_action_mapper_coordinate_formats():
     available = [Action.ACTION6]
     grid_shape = (64, 64)

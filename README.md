@@ -4,7 +4,7 @@
 
 `notebooks/assumeAndPlay.ipynb` now runs Eye and Brain through vLLM's in-process
 `LLM.chat()` API. It uses the local checkpoint and its chat template, passes board
-images as PNG data URLs, and disables thinking for short structured responses.
+images as PNG data URLs, and enables native thinking for Brain decisions and failed-attempt reviews. Only the final answer is parsed into actions and memory.
 Transformers supplies the CPU processor for context budgeting; it does not load
 model weights. The default YAML configurations select `backend: vllm`.
 
@@ -60,7 +60,7 @@ that a particular prompt and image count fit GPU memory.
 Fast evaluation uses measured board differences, with full Eye evaluation
 on stalled, repeated, or uncertain transitions, after a failed evaluation, and every
 `agent.full_eval_interval` steps (default 8). Speculative execution is capped at this
-interval and hands off for evaluation before Brain replans. Set
+interval and hands off for evaluation before Brain replans. The single-game notebook disables speculative execution and fast evaluation to inspect every move. Set
 `agent.speculative_plan_max_steps=0` to disable speculative planning. Malformed
 Eye observations and Brain reviews receive one retry; `eye.last_result` and
 `brain.last_review_result` report failure separately from world-model facts. Only externally verified HUD coordinates
@@ -334,3 +334,21 @@ clean = re.sub(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff\u0600-\u0
    - Log `raw_decoded` whenever foreign characters are detected (`ratio > 0.05`) so you can see the exact unstripped output.
 
 Would you like me to prepare an implementation plan and apply these fixes?
+
+## Hypothesis building and retries
+
+The single-game notebook evaluates each nonterminal move with Eye, including measured
+before/after object geometry. Brain uses native Gemma thinking and returns a compact
+world model, goal hypothesis, action model, competing hypotheses, experiment, and
+expected observation. Decisions reserve 2,048 output tokens and failed-attempt reviews
+4,096; these limits include thinking. Incomplete thinking blocks cannot supply actions.
+Eye has a 768-token output budget. This mode costs more inference time per move.
+
+Only click actions carry coordinates. Numeric action IDs receive their canonical API
+descriptions and signatures. Each move records the prediction and observation for
+later review. Reviews update the structured beliefs and next experiment, and same-level
+retries retain these while resetting the board and trajectory. Models' claims remain
+hypotheses rather than automatically becoming verified mechanics. Current beliefs are
+saved as `world_model.json` and `world_model.md` in each game's memory directory.
+
+Native thinking format reference: https://ai.google.dev/gemma/docs/capabilities/thinking

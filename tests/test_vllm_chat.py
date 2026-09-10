@@ -58,6 +58,26 @@ def test_context_failure_prevents_gpu_call(backend, monkeypatch):
     backend.engine.chat.assert_not_called()
 
 
+def test_thinking_keeps_only_final_decision_and_does_not_stop_inside_thoughts(backend):
+    backend.engine.chat.return_value[0].outputs[0].text = (
+        "<|channel>thought\nACTION=ACTION6 [END_ACTION]\n<channel|>"
+        "Hypotheses: H1 movement; H2 toggle.\nACTION=ACTION1 [END_ACTION]<turn|>")
+    response = backend.invoke([HumanMessage(content="Choose a test")], enable_thinking=True,
+                              max_tokens=2048, stop=["[END_ACTION]"])
+    assert "ACTION6" not in response.content
+    assert response.content.endswith("ACTION=ACTION1")
+    kwargs = backend.engine.chat.call_args.kwargs
+    assert kwargs["chat_template_kwargs"]["enable_thinking"] is True
+    assert kwargs["sampling_params"]["skip_special_tokens"] is False
+    assert kwargs["sampling_params"]["stop"] is None
+
+
+def test_incomplete_thought_is_not_rescued_as_action(backend):
+    backend.engine.chat.return_value[0].outputs[0].text = "<|channel>thought\nACTION=ACTION1"
+    with pytest.raises(RuntimeError, match="Thinking budget exhausted"):
+        backend.invoke([HumanMessage(content="Choose")], enable_thinking=True)
+
+
 def test_vllm_loader_uses_local_checkpoint_and_no_transformers_weights(tmp_path, monkeypatch):
     (tmp_path / "config.json").write_text(json.dumps({"model_type": "gemma4"}))
     llm = Mock(return_value=Mock())

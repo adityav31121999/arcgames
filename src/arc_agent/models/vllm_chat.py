@@ -2,6 +2,7 @@
 
 import base64
 import io
+import re
 from typing import Any
 
 from langchain_core.messages import AIMessage
@@ -13,6 +14,7 @@ from .gemma_transformers import GemmaTransformersChatModel, _sanitize_llm_text
 
 class VLLMChatModel(GemmaTransformersChatModel):
     engine: Any = Field(default=None)
+    thinking_active: bool = False
 
     @property
     def _llm_type(self):
@@ -23,6 +25,7 @@ class VLLMChatModel(GemmaTransformersChatModel):
 
         formatted, images = self._extract_images_and_text(messages)
         reserve = kwargs.get("max_new_tokens", kwargs.get("max_tokens", 128))
+        self.thinking_active = kwargs.get("enable_thinking", False)
         # CPU processor expansion preserves the existing context compaction rules.
         # No Transformers model is loaded and no input tensors are moved to CUDA.
         self._prepare_inputs(formatted, images, reserve)
@@ -43,11 +46,22 @@ class VLLMChatModel(GemmaTransformersChatModel):
             temperature=kwargs.get("temperature", self.temperature),
             top_p=kwargs.get("top_p", self.top_p),
             repetition_penalty=kwargs.get("repetition_penalty", self.repeat_penalty),
-            max_tokens=reserve, stop=stop or None,
+            max_tokens=reserve, stop=None if self.thinking_active else stop or None,
+            skip_special_tokens=not self.thinking_active,
         )
         result = self.engine.chat(chat, sampling_params=params, use_tqdm=False,
-                                  chat_template_kwargs={"enable_thinking": False})
+                                  chat_template_kwargs={"enable_thinking": self.thinking_active})
         raw = result[0].outputs[0].text.strip()
+        if self.thinking_active:
+            # Gemma's thought channel is internal deliberation, not an action or belief update.
+            # A budget exhausted inside that channel must never be parsed as a decision.
+            if "<channel|>" not in raw and ("<|channel>" in raw or getattr(result[0].outputs[0], "finish_reason", None) == "length"):
+                raise RuntimeError("Thinking budget exhausted before a final answer; increase Brain token budget.")
+            if "<channel|>" in raw:
+                raw = raw.rsplit("<channel|>", 1)[1]
+            raw = re.sub(r"<\|[^>]*>|<[^<\s]*\|>", "", raw).strip()
+            for marker in stop or []:
+                raw = raw.split(marker, 1)[0].strip()
         text = raw if kwargs.get("raw_output", False) else _sanitize_llm_text(
             raw, action_response=kwargs.get("action_response", False))
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=text))])

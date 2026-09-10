@@ -16,15 +16,17 @@ model:
   temperature: 0.0
   top_p: 0.95
   repeat_penalty: 1.0
-  max_new_tokens_eye: 256
-  max_new_tokens_brain: 128
+  max_new_tokens_eye: 768
+  max_new_tokens_brain: 2048
+  brain_enable_thinking: true
+  brain_review_max_tokens: 4096
 
 agent:
   stuck_threshold: 3
   consecutive_action_threshold: 5
   max_iterations_per_level: 3
   max_levels_per_game: 10
-  speculative_plan_max_steps: 25
+  speculative_plan_max_steps: 0
   full_eval_interval: 8
   time_budget_hours: 8.5
   memory_root: "./agent_memory"

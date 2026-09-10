@@ -30,8 +30,10 @@ class ModelConfig(BaseModel):
     temperature: float = Field(default=0.0)
     top_p: float = Field(default=0.95)
     repeat_penalty: float = Field(default=1.0)
-    max_new_tokens_eye: int = Field(default=256)
-    max_new_tokens_brain: int = Field(default=128)
+    max_new_tokens_eye: int = Field(default=768)
+    max_new_tokens_brain: int = Field(default=2048)
+    brain_enable_thinking: bool = True
+    brain_review_max_tokens: int = Field(default=4096)
 
 
 class AgentConfig(BaseModel):

@@ -9,15 +9,19 @@ from ..memory.knowledge import KnowledgeCache
 from .prompts import PROMPT_ACTION, PROMPT_CLICK_ONLY_TARGET, PROMPT_ITERATION_REVIEW, SYSTEM_PROMPT
 from .inference import StageResult, build_messages, invoke_stage
 from ..core.context import context_part
+from ..core.actions import canonical_action_name
 
 class BrainChain:
     """Core reasoning and action-selection engine."""
 
-    def __init__(self, model: BaseChatModel, max_tokens: int = 256, system_prompt: str = SYSTEM_PROMPT):
+    def __init__(self, model: BaseChatModel, max_tokens: int = 256, system_prompt: str = SYSTEM_PROMPT,
+                 enable_thinking: bool = False, review_max_tokens: int = 4096):
         self.model = model
         self.max_tokens = max_tokens
         self.system_prompt = system_prompt
         self.last_review_result = StageResult(False, error="Not run")
+        self.enable_thinking = enable_thinking
+        self.review_max_tokens = review_max_tokens
 
     def set_system_prompt(self, system_prompt: str) -> None:
         """Updates the system prompt for dynamic action spaces."""
@@ -29,6 +33,7 @@ class BrainChain:
             invoke_kwargs = {
                 "temperature": temperature,
                 "max_tokens": max_tokens,
+                "enable_thinking": self.enable_thinking,
             }
             if stop:
                 invoke_kwargs["stop"] = stop
@@ -64,7 +69,7 @@ class BrainChain:
             if current_state.grid is not None else "No current board available."
         )
 
-        action_names = [getattr(a, "name", str(a)) for a in valid_actions]
+        action_names = [canonical_action_name(a) for a in valid_actions]
         budget_section = f"Move Budget Status: {budget_context}\n" if budget_context else ""
         context_section = f"Navigation Context: {context_note}\n" if context_note else ""
 
@@ -86,16 +91,25 @@ State Metadata:
 
 Legal actions: {action_names}
 
-Reply format: three labeled lines. End the action line with [END_ACTION].
+Reconcile the latest observation with the previous prediction before choosing a move.
+Do not repeat a rejected hypothesis as fact. Compare at least two plausible explanations
+and pick one experiment with different predicted outcomes. Unknown goals remain hypotheses.
+Return a compact final decision record with these labeled lines; do not include internal deliberation.
+World model: <current entities and their relationships>
+Goal model: <testable goal hypothesis, or unknown>
+Action model: <observed button effects, distinguishing evidence from guesses>
+Hypotheses: <H1 and H2; supporting/contradicting step evidence>
+Open questions: <what the next experiment distinguishes>
 Plan: <one sentence goal and rationale>
 Expected effect: <specific observable change to test, or unknown>
 ACTION=<NAME> [X=<int> Y=<int>] [END_ACTION]
+Only ACTION6 gets X/Y; never append coordinates to movement buttons.
 Next action:"""
 
         return self._invoke(
             prompt,
             temperature=0.0,
-            max_tokens=min(128, self.max_tokens),
+            max_tokens=self.max_tokens,
             stop=["[END_ACTION]"],
             image_obj=current_state.get_pil_image(),
             action_response=True,
@@ -138,6 +152,7 @@ Ordered action sequence:"""
         s0_state: ARCState,
         final_state: ARCState,
         cache: KnowledgeCache,
+        world_model_block: str = "",
     ) -> str:
         final_state_name = getattr(final_state.game_state, "name", str(final_state.game_state))
 
@@ -147,11 +162,19 @@ Iteration: {iteration}
 Final game state reached: {final_state_name}
 
 Review the attached initial/final boards and memory context. Distinguish hypotheses from evidence."""
+        prompt += """
+Also return World model:, Goal model:, Action model:, Hypotheses:, Open questions:,
+Plan:, and Expected effect: as concise final labeled fields BEFORE FAILURE_REASON and RULES.
+Compare at least two explanations against specific action/step evidence, reject contradicted
+claims, and specify a different experiment for the next try. Coordinates only affect ACTION6.
+Repeated board changes alone do not establish goal progress. Preserve discoveries across retries.
+"""
 
         self.last_review_result = invoke_stage(
-            self.model, self.system_prompt, prompt, stage="Brain review", max_tokens=self.max_tokens,
+            self.model, self.system_prompt, prompt, stage="Brain review", max_tokens=self.review_max_tokens,
             images=[("Initial board", s0_state.get_pil_image()), ("Final board", final_state.get_pil_image())],
-            context=cache.context_sections(game_id, level),
-            required_labels=("FAILURE_REASON", "RULES"), temperature=0.35,
+            context=cache.context_sections(game_id, level) + [context_part("Current working world model", world_model_block, 0, "head")],
+            required_labels=("FAILURE_REASON", "RULES", "Action model", "Hypotheses", "Plan"),
+            temperature=0.0, enable_thinking=self.enable_thinking,
         )
         return self.last_review_result.text

@@ -1,6 +1,7 @@
 """Centralized system prompts and templates for ARC-AGI-3 Agent."""
 
 from typing import Any, Iterable, Optional
+from ..core.actions import canonical_action_name
 
 ACTION_DESCRIPTIONS = {
     "RESET": "Initialize or restarts the game/level state.",
@@ -19,13 +20,17 @@ SYSTEM_PROMPT_TEMPLATE = (
     "Available actions for this game:\n"
     "{actions_block}\n\n"
     "Core Guidelines:\n"
+    "- Only a click action accepts X/Y coordinates. Movement and interaction buttons are global, not clicks on objects.\n"
+    "- Separate the action API from inferred game effects. Do not assume a button moves only one object.\n"
+    "- Maintain competing hypotheses, cite observations that support or contradict them, and choose a test that distinguishes them.\n"
     "- Identify the interactive puzzle elements and rule mechanics through structured actions.\n"
     "- Border glyphs may be HUD trackers or interactive elements; treat their role as unknown until tested.\n"
     "- A NO-OP means no detected visible change; it does not prove a wall or invalid action. "
     "Test alternatives and prerequisites.\n"
     "- Check if there is any piece that needs to matched or not, whether reach a goal post, and other possible objectives "
     "like moving from one point to another, placing object over something, etc.\n"
-    "- Maintain working memory using labeled prefixes: 'World model:', 'Goal model:', 'Action model:', 'Recent findings:', 'Plan:'."
+    "- Maintain working memory using labeled prefixes: 'World model:', 'Goal model:', 'Action model:', 'Recent findings:', 'Plan:'.\n"
+    "- Avoid repeating an unchanged experiment; retry a NO-OP when state or prerequisites change.\n"
 )
 
 SYSTEM_PROMPT_CLICK_ONLY = (
@@ -62,7 +67,7 @@ def build_system_prompt(action_space: Optional[Iterable[Any]] = None) -> str:
 
     lines = []
     for a in action_space:
-        name = getattr(a, "name", str(a))
+        name = canonical_action_name(a)
         uname = name.upper()
         if uname in ACTION_DESCRIPTIONS:
             lines.append(f"    - {name}: {ACTION_DESCRIPTIONS[uname]}")

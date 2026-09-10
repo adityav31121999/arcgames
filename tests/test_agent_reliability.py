@@ -139,7 +139,7 @@ def test_retry_counts_all_steps_and_uses_prior_analysis(agent):
     assert env.resets == 1
     agent.eye.assume.assert_called_once()
     agent.eye.compare_assume.assert_called_once()
-    agent.review_failed_iteration.assert_called_once()
+    assert agent.review_failed_iteration.call_count == 2
 
 
 def test_fast_mode_reassesses_stuck_and_passes_action_intent(agent):
@@ -280,3 +280,21 @@ def test_failed_attempt_review_uses_brain_and_saves_hypotheses(agent):
     agent.brain.review.assert_called_once()
     assert "Test another direction" in agent.cache.scratch("visual")
     assert "REVIEW HYPOTHESES (UNVERIFIED)" in agent.cache.scratch("visual")
+
+
+def test_retry_preserves_review_world_model_and_experiment(agent):
+    env = Environment()
+    initial = agent.enter_level("retry_memory", 1, env.obs(), True, env.action_space)
+    agent.brain.review = Mock(return_value=(
+        "Action model: Movement buttons affect both tokens.\n"
+        "Hypotheses: H1 shared movement; H2 independent movement.\n"
+        "Plan: Test a perpendicular movement.\nExpected effect: Observe both tokens.\n"
+        "FAILURE_REASON: Same experiment repeated\nRULES:\n- Compare both tokens"))
+    agent.review_failed_iteration("retry_memory", 1, 1, initial, initial)
+    agent.enter_level("retry_memory", 1, env.obs(), False, env.action_space)
+    assert agent.world_model.action_model == "Movement buttons affect both tokens."
+    assert agent.world_model.current_plan == "Test a perpendicular movement."
+    assert agent.world_model.expected_effect == "Observe both tokens."
+    assert "FAILURE_REASON" not in agent.world_model.to_prompt_block()
+    from pathlib import Path
+    assert "H1 shared movement" in (Path(agent.memory_root) / "retry_memory/world_model.json").read_text()

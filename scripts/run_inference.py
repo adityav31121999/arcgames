@@ -85,7 +85,7 @@ def main():
 
     # 2. Build LangChain chains
     eye_chain = EyeChain(llm, max_tokens=config.model.max_new_tokens_eye)
-    brain_chain = BrainChain(llm, max_tokens=config.model.max_new_tokens_brain)
+    brain_chain = BrainChain(llm, max_tokens=config.model.max_new_tokens_brain, enable_thinking=config.model.brain_enable_thinking, review_max_tokens=config.model.brain_review_max_tokens)
 
     # 3. Game state resolver
     try:

@@ -1,13 +1,17 @@
 """High-level LangChain-powered ARCAgent orchestrating chains, spatial memory, and heuristics."""
 
 from datetime import datetime, timezone
+from pathlib import Path
+from dataclasses import asdict
+import json
+import re
 from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from ..chains.brain import BrainChain
 from ..chains.eye import EyeChain
 from ..chains.prompts import build_system_prompt
-from ..core.actions import ARCActionMapper, ActionSignature, is_complex_action
+from ..core.actions import canonical_action_name, ARCActionMapper, ActionSignature, is_complex_action
 from ..core.object_detection import (
     detect_grid_objects,
     is_click_only,
@@ -53,6 +57,7 @@ class ARCLangChainAgent:
         self.consecutive_parse_failures: int = 0
         self.last_action_plan = ""
         self.last_expected_effect = ""
+        self._level_key = None
 
     def set_action_space(self, action_space: Optional[Any]) -> None:
         """Dynamically builds and sets system prompts across all chains matching the actual action space."""
@@ -86,20 +91,27 @@ class ARCLangChainAgent:
 
         render_live(s0_state, status="S0 Initial State Setup")
 
-        self.world_model.reset_level_fields()
+        same_level_retry = self._level_key == (game_id, level)
+        if not same_level_retry:
+            self.world_model.reset_level_fields()
+        self._level_key = (game_id, level)
 
         object_list = ""
         if s0_state.grid is not None:
             object_list = render_detected_objects(s0_state.grid)
-        action_names = [getattr(a, "name", str(a)) for a in (valid_actions or [])]
+        action_names = [canonical_action_name(a) for a in (valid_actions or [])]
 
         if is_first_level_of_game:
             eye_out = self.eye.assume(game_id, level, s0_state, self.cache, object_list=object_list, action_names=action_names)
         else:
             eye_out = self.eye.compare_assume(game_id, level, s0_state, self.cache, object_list=object_list, action_names=action_names)
 
-        if eye_out:
+        if eye_out and not same_level_retry:
             self.world_model.update_from_text(eye_out)
+        elif eye_out:
+            # The board reset; learned mechanisms and the review's next experiment persist.
+            self.world_model.recent_findings = "Board reset for a new attempt. " + eye_out
+        self.persist_world_model(game_id)
 
         return s0_state
 
@@ -116,6 +128,8 @@ class ARCLangChainAgent:
     ) -> Tuple[ARCState, ARCTransition, bool, bool]:
         """Executes action in environment, captures new state and updates spatial trajectory."""
         action_sig = ActionSignature.from_action(action, action_data)
+        if not is_complex_action(action):
+            action_data = {}
         if action_data:
             try:
                 raw_obs = env.step(action, data=action_data)
@@ -195,6 +209,7 @@ class ARCLangChainAgent:
         action, action_data = ARCActionMapper.parse(raw, allowed_actions, grid_shape, prohibited=prohibited)
         if action is not None:
             self._record_action_intent(raw)
+            self.persist_world_model(game_id)
             self.consecutive_parse_failures = 0
             return action, action_data, context_note
 
@@ -221,6 +236,7 @@ class ARCLangChainAgent:
         action, action_data = ARCActionMapper.parse(raw_retry, allowed_actions, grid_shape, prohibited=prohibited)
         if action is not None:
             self._record_action_intent(raw_retry)
+            self.persist_world_model(game_id)
             self.consecutive_parse_failures = 0
             return action, action_data, context_note
 
@@ -246,6 +262,18 @@ class ARCLangChainAgent:
         self.last_action_plan = intent.current_plan
         self.last_expected_effect = intent.expected_effect
         self.world_model.update_from_text(text)
+
+    def persist_world_model(self, game_id: str) -> None:
+        directory = Path(self.memory_root) / game_id
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "world_model.json").write_text(json.dumps(asdict(self.world_model), indent=2), encoding="utf-8")
+        (directory / "world_model.md").write_text(self.world_model.to_prompt_block(), encoding="utf-8")
+        scratch = self.cache.scratch(game_id)
+        goal = self.world_model.goal_model or "Unknown; choose a discriminating experiment."
+        scratch = re.sub(r"(## OBJECTIVE\n).*?(?=\n## |\Z)",
+                         lambda match: match.group(1) + "Hypothesis (unverified): " + goal + "\n",
+                         scratch, flags=re.S)
+        self.cache.write_scratch(game_id, scratch)
 
     def _safe_fallback(
         self,
@@ -307,7 +335,7 @@ class ARCLangChainAgent:
         force: bool = False,
     ) -> Optional[Tuple[int, int]]:
         height, width = grid_shape
-        name = getattr(action, "name", str(action)).upper()
+        name = canonical_action_name(action)
         tried_coords = set(self.memory.tried_coords_for_action(state_hash, name))
 
         cx, cy = width // 2, height // 2
@@ -369,6 +397,9 @@ class ARCLangChainAgent:
             status=f"🧠 Iteration {iteration} failed — reviewing full log & consolidating scratchpad...",
         )
         review_text = self.brain.review(
-            game_id, level, iteration, s0_state, final_state, self.cache
+            game_id, level, iteration, s0_state, final_state, self.cache,
+            world_model_block=self.world_model.to_prompt_block(),
         )
         apply_iteration_review(self.cache, game_id, level, iteration, review_text)
+        self.world_model.update_from_text(review_text)
+        self.persist_world_model(game_id)

@@ -394,6 +394,11 @@ class ARCRunner:
             if next_state.levels_completed > initial_completed or self.agent.resolver.is_terminal(next_state.game_state):
                 return next_state, next_state.game_state, step_count
 
+            evidence = " ".join(observation_note.split())
+            self.agent.cache.append_action_log(game_id, level,
+                f"\nStep {step_count} evidence: action={next_transition.action_sig}; "
+                f"prediction={expected_effect or 'unknown'}; observed={evidence}\n")
+            self.agent.persist_world_model(game_id)
             current_state = next_state
 
         return current_state, current_state.game_state, step_count
@@ -429,7 +434,6 @@ class ARCRunner:
 
             if iteration > 1:
                 curr_obs = env.reset() if hasattr(env, "reset") else env.step(None)
-                self.agent.world_model.reset_level_fields()
                 self.agent.cache.append_action_log(game_id, level, f"\n### --- RETRY ITERATION {iteration} (Try {iteration}/{iterations_limit}) ---\n")
 
             s0_state = self.agent.enter_level(
@@ -449,8 +453,7 @@ class ARCRunner:
                 break
 
             if self.agent.resolver.is_game_over(state):
-                if iteration < iterations_limit:
-                    self.agent.review_failed_iteration(game_id, level, iteration, s0_state, curr_state)
+                self.agent.review_failed_iteration(game_id, level, iteration, s0_state, curr_state)
                 final_state = curr_state
                 total_steps += steps_used
                 continue
@@ -478,8 +481,7 @@ class ARCRunner:
                 print(f"⛔ [BUDGET] Stopping Level {level}: action budget reached after iteration {iteration}.")
                 break
 
-            if iteration < iterations_limit:
-                self.agent.review_failed_iteration(game_id, level, iteration, s0_state, final_state)
+            self.agent.review_failed_iteration(game_id, level, iteration, s0_state, final_state)
 
         return (final_state.raw_obs if final_state else curr_obs), state, total_steps
 

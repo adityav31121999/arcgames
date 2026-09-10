@@ -35,10 +35,15 @@ def is_complex_action(action: Any) -> bool:
     if action == 6 or getattr(action, "value", None) == 6:
         return True
     name = getattr(action, "name", str(action)).upper()
-    if "ACTION_6" in name or "ACTION6" in name or "CLICK" in name:
+    if name == "6" or "ACTION_6" in name or "ACTION6" in name or "CLICK" in name:
         return True
     val = getattr(action, "is_complex", False)
     return val() if callable(val) else bool(val)
+
+
+def canonical_action_name(action: Any) -> str:
+    name = getattr(action, "name", str(action)).upper().replace("ACTION_", "ACTION")
+    return _ACTION_NAME_ALIASES.get(name, name)
 
 
 def validate_coordinates(x: int, y: int, grid_shape: Tuple[int, int]) -> bool:
@@ -83,8 +88,8 @@ class ActionSignature:
 
     @classmethod
     def from_action(cls, action: Any, action_data: Optional[Dict[str, Any]] = None) -> "ActionSignature":
-        name = getattr(action, "name", str(action)).upper()
-        data = tuple(sorted((action_data or {}).items()))
+        name = canonical_action_name(action)
+        data = tuple(sorted((action_data or {}).items())) if is_complex_action(action) else ()
         return cls(name=name, data=data)
 
     def __str__(self) -> str:
@@ -146,7 +151,7 @@ class ARCActionMapper:
             rest = m.group(2)
 
             coords = extract_coordinates(rest, grid_shape) or extract_coordinates(response_text, grid_shape)
-            if coords:
+            if coords and is_complex_action(candidate):
                 action_data = coords
 
             if is_complex_action(candidate) and not action_data:
@@ -167,11 +172,13 @@ class ARCActionMapper:
             if len(matched_candidates) == 1:
                 selected_action = matched_candidates[0]
                 coords = extract_coordinates(response_text, grid_shape)
-                if coords:
+                if coords and is_complex_action(selected_action):
                     action_data = coords
             else:
                 return None, {}
 
+        if is_complex_action(selected_action) and not action_data:
+            return None, {}
         sig = ActionSignature.from_action(selected_action, action_data)
         if sig in prohibited:
             return None, {}

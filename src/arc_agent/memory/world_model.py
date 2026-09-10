@@ -9,6 +9,7 @@ _LABELS = [
     "World model",
     "Goal model",
     "Action model",
+    "Hypotheses",
     "Recent findings",
     "Open questions",
     "Plan",
@@ -29,7 +30,7 @@ def _extract_labeled_blocks(content: str, labels: list[str]) -> Dict[str, str]:
         while candidate.startswith(("-", "*")):
             candidate = candidate[1:].lstrip()
         lowered = candidate.lower()
-        if lowered.startswith("action="):
+        if lowered.startswith(("action=", "failure_reason:", "rules:")):
             current_label = None
             continue
 
@@ -80,6 +81,7 @@ class WorldModel:
     world_model: str = ""
     goal_model: str = ""
     action_model: str = ""
+    hypotheses: str = ""
     recent_findings: str = ""
     open_questions: str = ""
     current_plan: str = ""
@@ -111,6 +113,7 @@ class WorldModel:
         self.world_model = ""
         self.goal_model = ""
         self.action_model = ""
+        self.hypotheses = ""
         self.recent_findings = ""
         self.open_questions = ""
         self.current_plan = ""
@@ -121,6 +124,7 @@ class WorldModel:
             self.world_model,
             self.goal_model,
             self.action_model,
+            self.hypotheses,
             self.recent_findings,
             self.open_questions,
             self.current_plan,
@@ -133,9 +137,11 @@ class WorldModel:
             ("World model", self.world_model),
             ("Goal model", self.goal_model),
             ("Action model", self.action_model),
+            ("Hypotheses", self.hypotheses),
             ("Recent findings", self.recent_findings),
             ("Open questions", self.open_questions),
             ("Plan", self.current_plan),
+            ("Expected effect", self.expected_effect),
             ("Cross-level notes", self.cross_level_notes),
         ]
         lines = [f"- {label}: {value}" for label, value in entries if value]

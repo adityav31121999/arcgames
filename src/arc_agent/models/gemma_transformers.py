@@ -322,7 +322,7 @@ class GemmaTransformersChatModel(BaseChatModel):
         while True:
             prompt_text = self.processor.apply_chat_template(
                 formatted_messages, tokenize=False, add_generation_prompt=True,
-                **({"enable_thinking": False} if self._llm_type == "vllm_chat_model" else {}),
+                **({"enable_thinking": self.thinking_active} if self._llm_type == "vllm_chat_model" else {}),
             )
             processor_kwargs = dict(text=[prompt_text], return_tensors="pt", padding=True,
                                     add_special_tokens=False)
@@ -533,7 +533,7 @@ class MockChatModel(BaseChatModel):
             elif "Analyze the visual change" in last_text:
                 resp = "Recent findings: Compared the before and after boards.\nOpen questions: Does the change advance the goal?"
             elif "An attempt at this level just ended" in last_text:
-                resp = "FAILURE_REASON: Exploration did not establish the goal.\nRULES:\n- Test an alternative and compare the result."
+                resp = "Action model: Button effect remains uncertain.\nHypotheses: H1 movement; H2 interaction.\nPlan: Test an alternative.\nFAILURE_REASON: Exploration did not establish the goal.\nRULES:\n- Test an alternative and compare the result."
             elif (
                 "initial visual layout" in last_text
                 or "PROMPT_ASSUME" in last_text

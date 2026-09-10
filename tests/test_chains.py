@@ -78,6 +78,9 @@ def test_dynamic_system_prompt_builder():
     assert "ACTION6" not in custom_prompt
     assert "ACTION7" not in custom_prompt
     assert "RESET:" not in custom_prompt
+    numeric_prompt = build_system_prompt([1, 2, 3, 4, 5, 6])
+    assert "ACTION1: Upward movement" in numeric_prompt
+    assert "ACTION6: Click" in numeric_prompt
 
 
 def test_agent_action_space_propagation(tmp_path):

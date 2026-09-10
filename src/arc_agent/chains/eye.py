@@ -6,6 +6,8 @@ from langchain_core.language_models.chat_models import BaseChatModel
 
 from ..core.state import ARCState, ARCTransition
 from ..memory.knowledge import KnowledgeCache
+from ..core.object_detection import render_detected_objects
+from ..core.context import context_part
 from .inference import StageResult, invoke_stage
 from .prompts import PROMPT_ANALYSE_VISUAL, PROMPT_ASSUME, PROMPT_COMP_ASSUME, SYSTEM_PROMPT
 
@@ -126,5 +128,9 @@ State Metadata:
                 ("After action", transition.current.get_pil_image()),
             ],
             required_labels=("Recent findings", "Open questions"),
+            context=[
+                context_part("Measured objects before (roles unknown)", render_detected_objects(transition.previous.grid) if transition.previous else "Unavailable", 1, "head"),
+                context_part("Measured objects after (roles unknown)", render_detected_objects(transition.current.grid), 1, "head"),
+            ],
         )
 
