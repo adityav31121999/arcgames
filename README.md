@@ -142,6 +142,65 @@ arcgame/
 
 ---
 
+## Agent Flow
+
+```mermaid
+flowchart TD
+    subgraph ENV["ARC-AGI-3 Environment"]
+        GAME[("Arcade Game Engine")]
+    end
+
+    subgraph SINGLE["Single Unified Model (Eye + Brain + Debugger collapsed)"]
+        CTX["Context Assembler"]
+        LLM["Unified LLM Call<br/>(perceive → decide → audit in one pass)"]
+    end
+
+    subgraph MEM["Memory Layer"]
+        direction TB
+        TM["TrajectoryMemory<br/>(state_hash, action) → outcome map<br/>momentum_streak / noop_streak"]
+        WM["WorldModel<br/>Goal / Action / Plan text fields"]
+        VIS["Visual Index<br/>level_states/*.png + index.json<br/>(S0 thumbnail ↔ World-model text)"]
+        KC["KnowledgeCache<br/>scratchpad.md / actions_log.md / discovered_rules.md"]
+    end
+
+    subgraph GUARD["Action Guard (code-level, not LLM-trusted)"]
+        CHECK{"(state_hash, action)<br/>seen with NO_CHANGE?"}
+        ALLOW["Allow action<br/>(repeat OK if state still changing)"]
+        BLOCK["Prohibit action<br/>force alternative / bump temperature"]
+    end
+
+    GAME -->|"S_t frame"| CTX
+    TM -->|"loop warnings, tried/blocked actions"| CTX
+    WM -->|"current hypotheses"| CTX
+    VIS -->|"prior level S0 thumbnail + description"| CTX
+    KC -->|"scratchpad, action log"| CTX
+
+    CTX --> LLM
+    LLM -->|"ACTION + expected effect"| CHECK
+    CHECK -- "no / new state" --> ALLOW
+    CHECK -- "yes" --> BLOCK
+    BLOCK -->|"retry with alternative"| LLM
+
+    ALLOW -->|"execute"| GAME
+    GAME -->|"S_t+1"| DIFF["Grid Diff (numpy)"]
+
+    DIFF -->|"changed?"| TM
+    DIFF -->|"unchanged N times OR level transition"| LLM
+    LLM -->|"update Goal/Action/Plan"| WM
+    LLM -->|"on new level: compare S0 image vs prior S0"| VIS
+    LLM -->|"append log line"| KC
+
+    DIFF -->|"level failure"| REVIEW["review_failed_iteration()"]
+    REVIEW --> KC
+    REVIEW --> WM
+
+    style CHECK fill:#332,stroke:#fa0
+    style BLOCK fill:#411,stroke:#f55
+    style ALLOW fill:#143,stroke:#5f5
+```
+
+---
+
 ## 🛠️ Quickstart
 
 ### 1. Installation

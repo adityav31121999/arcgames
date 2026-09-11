@@ -75,19 +75,26 @@ State Metadata:
         cache: KnowledgeCache,
         object_list: str = "",
         action_names: Optional[List[str]] = None,
+        prior_s0_image: Optional[Any] = None,
+        prior_world_model: Optional[str] = None,
     ) -> str:
         """Compares prior level analyses with new level S0 state."""
         object_section = f"\nDetected Foreground Objects:\n{object_list}\n" if object_list else ""
         actions_section = f"Allowed Actions: {action_names}\n" if action_names else ""
+        prior_wm_section = f"\nPrior Level World Model / Grounded Notes:\n{prior_world_model}\n" if prior_world_model else ""
 
         prompt = f"""{PROMPT_COMP_ASSUME}
-
+{prior_wm_section}
 {object_section}{actions_section}
 State Metadata of S0:
 {s0_state.compact_json_repr}"""
 
         pil_img = s0_state.get_pil_image()
-        text = self._invoke(prompt, image_obj=pil_img, context=cache.context_sections(game_id, level, include_prior=True))
+        if prior_s0_image is not None:
+            images = [("Prior level S0", prior_s0_image), ("Current level S0", pil_img)]
+            text = self._invoke(prompt, images=images, context=cache.context_sections(game_id, level, include_prior=True))
+        else:
+            text = self._invoke(prompt, image_obj=pil_img, context=cache.context_sections(game_id, level, include_prior=True))
 
         if not self.last_result.ok:
             return (

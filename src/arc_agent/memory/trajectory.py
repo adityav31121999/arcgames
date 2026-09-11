@@ -1,11 +1,17 @@
 """Trajectory tracking, loop detection, oscillation prevention, and sprite region tracking."""
 
+from enum import Enum
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple
 import numpy as np
 
 from ..core.actions import canonical_action_name, ActionSignature, is_complex_action
 from ..core.diff import get_gameplay_grid
+
+
+class Outcome(Enum):
+    CHANGED = "changed"
+    NO_CHANGE = "no_change"
 
 
 @dataclass
@@ -26,6 +32,15 @@ class TrajectoryMemory:
         self.sprite_box: Optional[Tuple[int, int, int, int]] = None
         self.state_history: List[str] = []
 
+        # (state_hash, action_name) -> last observed outcome for that exact pair
+        self.tried_pairs: Dict[Tuple[str, str], Outcome] = {}
+        self.same_action_streak: int = 0
+        self._last_action: Optional[str] = None
+        self.noop_streak: int = 0
+        self.momentum_streak: int = 0
+        self.NOOP_STREAK_THRESHOLD: int = 3
+        self.NOOP_HARD_BLOCK_REPEATS: int = 1
+
     def reset(self, s0_hash: str) -> None:
         """Resets trajectory for a new level or retry iteration."""
         self.trajectory = [TrajectoryStep(s0_hash, None, None)]
@@ -34,6 +49,11 @@ class TrajectoryMemory:
         self.transition_model = {}
         self.sprite_box = None
         self.state_history = [s0_hash]
+        self.tried_pairs = {}
+        self.same_action_streak = 0
+        self._last_action = None
+        self.noop_streak = 0
+        self.momentum_streak = 0
 
     def update_sprite_region(
         self, grid1: Optional[np.ndarray], grid2: Optional[np.ndarray]
@@ -104,11 +124,71 @@ class TrajectoryMemory:
         self.actions_tried_from_state.setdefault(prev_hash, set()).add(action_sig)
         self.transition_model[(prev_hash, action_sig)] = (new_hash, changed)
 
+        action_name = getattr(action_sig, "name", str(action_sig)).upper()
+        self.record_step(prev_hash, action_name, bool(changed))
+
         is_repeat_state = new_hash in self.state_visit_count
         self.state_visit_count[new_hash] = self.state_visit_count.get(new_hash, 0) + 1
         self.trajectory.append(TrajectoryStep(new_hash, action_sig, changed))
         self.state_history.append(new_hash)
         return is_repeat_state, is_repeat_transition
+
+    def record_step(self, state_hash: str, action: str, changed: bool) -> None:
+        """Call this once per step, right after computing the grid diff."""
+        action_name = str(action).upper()
+        outcome = Outcome.CHANGED if changed else Outcome.NO_CHANGE
+        self.tried_pairs[(state_hash, action_name)] = outcome
+
+        if changed:
+            self.noop_streak = 0
+            self.momentum_streak += 1
+        else:
+            self.noop_streak += 1
+            self.momentum_streak = 0
+
+        if action_name == self._last_action:
+            self.same_action_streak += 1
+        else:
+            self.same_action_streak = 1
+        self._last_action = action_name
+
+    def is_action_blocked(self, state_hash: str, action: Any) -> bool:
+        """
+        The ONLY thing that blocks an action: this exact (state, action) pair
+        has already been tried in this exact state and produced no change.
+        Repeating an action that keeps producing change is never blocked.
+        """
+        name = canonical_action_name(action)
+        outcome = self.tried_pairs.get((state_hash, name))
+        return outcome == Outcome.NO_CHANGE
+
+    def should_diversify(self) -> bool:
+        """True when the board itself has been stuck (not the action)."""
+        return self.noop_streak >= self.NOOP_STREAK_THRESHOLD
+
+    def suggested_temperature(self, base_temp: float = 0.0) -> float:
+        return 1.0 if self.should_diversify() else base_temp
+
+    def context_notice(self, state_hash: str, action: Optional[str] = None) -> Optional[str]:
+        """Text to inject into the prompt, distinguishing momentum from real loops."""
+        if action and self.is_action_blocked(state_hash, action):
+            return (
+                f"[TRAJECTORY WARNING] {action} was already tried in this exact "
+                f"board state and produced NO visible change. Do not repeat it "
+                f"here unless a prerequisite changes first."
+            )
+        if self.momentum_streak >= 2 and self._last_action:
+            return (
+                f"[MOMENTUM] {self._last_action} has produced visible change {self.momentum_streak} "
+                f"times in a row. Continuing to repeat it is expected if progress is ongoing."
+            )
+        if self.should_diversify():
+            return (
+                f"[TRAJECTORY WARNING] The board has not changed for {self.noop_streak} "
+                f"consecutive steps regardless of action taken. Try a different action "
+                f"or target than recent attempts."
+            )
+        return None
 
     def tried_signatures(self, state_hash: str) -> Set[ActionSignature]:
         return self.actions_tried_from_state.get(state_hash, set())
@@ -130,6 +210,8 @@ class TrajectoryMemory:
     def oscillation_target(self) -> Optional[str]:
         if len(self.state_history) < 3:
             return None
+        if self.state_history[-1] == self.state_history[-3]:
+            return self.state_history[-2]
         return self.state_history[-3]
 
     def tried_coords_for_action(self, state_hash: str, action_name: str) -> List[Tuple[int, int]]:
@@ -200,21 +282,21 @@ class TrajectoryMemory:
         return ""
 
     def get_allowed_actions(self, state_hash: str, valid_actions: List[Any]) -> List[Any]:
-        tried = self.tried_signatures(state_hash)
-        tried_simple_names = {sig.name for sig in tried if not sig.data}
-
-        allowed = [
-            a
-            for a in valid_actions
-            if is_complex_action(a) or canonical_action_name(a) not in tried_simple_names
-        ]
+        """
+        Filter candidate action list down to ones not yet proven dead in this exact state.
+        An action is ONLY blocked if that exact (state, action) pair already produced NO_CHANGE.
+        Repeating an action that keeps producing change (momentum) is never blocked.
+        """
+        allowed = [a for a in valid_actions if not self.is_action_blocked(state_hash, a)]
+        if not allowed:
+            allowed = list(valid_actions)
 
         osc_target = self.oscillation_target()
         if osc_target is not None:
 
             def _leads_to_oscillation(a: Any) -> bool:
                 name = canonical_action_name(a)
-                for sig in tried:
+                for sig in self.tried_signatures(state_hash):
                     if sig.name != name:
                         continue
                     result = self.transition_model.get((state_hash, sig))
@@ -226,20 +308,17 @@ class TrajectoryMemory:
             if non_oscillating:
                 allowed = non_oscillating
 
-        if len(self.trajectory) >= 5:
-            recent = self.trajectory[-5:]
-            recent_actions = [step.action_sig for step in recent if step.action_sig is not None]
-            if len(recent_actions) == 5:
-                first_act_name = recent_actions[0].name
-                same_name = all(act.name == first_act_name for act in recent_actions)
-                all_noop = all(step.changed is False for step in recent[1:])
-                if same_name and all_noop:
-                    trimmed = [
-                        a
-                        for a in allowed
-                        if canonical_action_name(a) != first_act_name.upper()
-                    ]
-                    if trimmed:
-                        allowed = trimmed
+        if self.noop_streak >= self.NOOP_STREAK_THRESHOLD and self._last_action:
+            trimmed = [
+                a
+                for a in allowed
+                if canonical_action_name(a) != self._last_action
+            ]
+            if trimmed:
+                allowed = trimmed
 
         return allowed or list(valid_actions)
+
+    def allowed_actions(self, state_hash: str, candidate_actions: List[Any]) -> List[Any]:
+        """Filter candidate action list down to ones not yet proven dead in this exact state."""
+        return self.get_allowed_actions(state_hash, candidate_actions)

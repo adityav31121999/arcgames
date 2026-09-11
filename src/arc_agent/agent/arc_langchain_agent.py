@@ -29,6 +29,7 @@ from ..memory.knowledge import (
 )
 from ..memory.trajectory import TrajectoryMemory
 from ..memory.world_model import WorldModel
+from ..memory.visual_index import VisualWorldModelIndex, build_compare_assume_payload
 from ..utils.display import render_live
 
 
@@ -60,6 +61,7 @@ class ARCLangChainAgent:
         self.memory = TrajectoryMemory()
         self.cache = KnowledgeCache(memory_root=memory_root)
         self.world_model = WorldModel()
+        self.visual_index = VisualWorldModelIndex(agent_memory_dir=memory_root)
         self.consecutive_parse_failures: int = 0
         self.last_action_plan = ""
         self.last_expected_effect = ""
@@ -109,16 +111,31 @@ class ARCLangChainAgent:
             object_list = render_detected_objects(s0_state.grid)
         action_names = [canonical_action_name(a) for a in (valid_actions or [])]
 
+        pil_s0 = s0_state.get_pil_image()
+        if pil_s0 is not None:
+            self.visual_index.save_level_s0(level, pil_s0)
+
         if is_first_level_of_game:
             eye_out = self.eye.assume(game_id, level, s0_state, self.cache, object_list=object_list, action_names=action_names)
         else:
-            eye_out = self.eye.compare_assume(game_id, level, s0_state, self.cache, object_list=object_list, action_names=action_names)
+            payload = build_compare_assume_payload(self.visual_index, level, pil_s0)
+            prior_img = None
+            for role, img in payload.get("images", []):
+                if role == "Prior level S0":
+                    prior_img = img
+                    break
+            eye_out = self.eye.compare_assume(
+                game_id, level, s0_state, self.cache, object_list=object_list, action_names=action_names,
+                prior_s0_image=prior_img, prior_world_model=payload.get("prior_world_model_text"),
+            )
 
         if eye_out and not same_level_retry:
             self.world_model.update_from_text(eye_out)
+            self.visual_index.save_world_model_text(level, self.world_model.to_prompt_block())
         elif eye_out:
             # The board reset; learned mechanisms and the review's next experiment persist.
             self.world_model.recent_findings = "Board reset for a new attempt. " + eye_out
+            self.visual_index.save_world_model_text(level, self.world_model.to_prompt_block())
         self.persist_world_model(game_id)
 
         return s0_state
@@ -186,16 +203,22 @@ class ARCLangChainAgent:
         trajectory_ctx = self.memory.recent_trajectory_text()
         sprite_highlight = self.memory.get_sprite_guidance()
 
-        # Dynamic temperature: 1.0 when repeating moves, looping, or stuck in a NO-OP, else 0.0
-        stuck_or_looping = bool(is_stuck) or bool(warning) or bool(behavior_warning)
+        # Dynamic temperature: escalate off noop_streak (board stuck) or loop warnings, NOT off momentum
+        stuck_or_looping = bool(is_stuck) or bool(warning) or self.memory.should_diversify()
         temperature = 1.0 if stuck_or_looping else 0.0
+
+        context_notice = self.memory.context_notice(state_hash)
 
         context_note = "\n".join(
             x
-            for x in [observation_note, warning, behavior_warning, sprite_highlight, f"[TRAJECTORY] {trajectory_ctx}"]
+            for x in [observation_note, warning, context_notice, sprite_highlight, f"[TRAJECTORY] {trajectory_ctx}"]
             if x
         )
-        prohibited = self.memory.tried_signatures(state_hash)
+        # Only prohibit actions that already produced NO_CHANGE in this exact state
+        prohibited = {
+            sig for sig in self.memory.tried_signatures(state_hash)
+            if self.memory.is_action_blocked(state_hash, sig.name)
+        }
 
         world_model_block = self.world_model.to_prompt_block()
 
