@@ -42,6 +42,7 @@ def test_satisfied_dependencies_skip_install_even_with_torch_imported(setup):
     function(inputs, work)
     assert len(calls) == 1 and "--dry-run" in calls[0]
     assert "--upgrade" not in calls[0]
+    assert "cuda-toolkit[nvcc]>=12.9" in calls[0]
 
 
 def test_install_requires_one_restart_then_rerun_skips(setup):

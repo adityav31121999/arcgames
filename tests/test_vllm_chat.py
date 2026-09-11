@@ -83,7 +83,8 @@ def test_vllm_loader_uses_local_checkpoint_and_no_transformers_weights(tmp_path,
     llm = Mock(return_value=Mock())
     processor = SimpleNamespace(image_processor=object(), chat_template="native")
     auto = SimpleNamespace(from_pretrained=Mock(return_value=processor))
-    monkeypatch.setitem(sys.modules, "vllm", SimpleNamespace(LLM=llm))
+    monkeypatch.setitem(sys.modules, "vllm", SimpleNamespace(LLM=llm, SamplingParams=lambda **kw: kw))
+    monkeypatch.setitem(sys.modules, "vllm.config", SimpleNamespace(ReasoningConfig=lambda **kw: kw))
     monkeypatch.setitem(sys.modules, "transformers", SimpleNamespace(AutoProcessor=auto))
     wrapper = load_vllm(ModelConfig(backend="vllm", max_context_length=32768), str(tmp_path))
     assert wrapper.engine is llm.return_value
@@ -91,3 +92,41 @@ def test_vllm_loader_uses_local_checkpoint_and_no_transformers_weights(tmp_path,
     assert llm.call_args.kwargs["limit_mm_per_prompt"] == {"image": 2}
     assert llm.call_args.kwargs["max_model_len"] == 32768
     assert auto.from_pretrained.call_args.kwargs["local_files_only"] is True
+    assert llm.call_args.kwargs["reasoning_config"] == {
+        "reasoning_start_str": "<|channel>thought\n", "reasoning_end_str": "<channel|>",
+    }
+    assert wrapper.thinking_token_budget == 1024
+
+
+def test_native_thinking_budget_leaves_room_for_final_answer(backend):
+    backend.thinking_token_budget = 1024
+    backend.engine.chat.return_value[0].outputs[0].text = "<channel|>ACTION=ACTION1"
+    backend.invoke([HumanMessage(content="Choose")], enable_thinking=True, max_tokens=4096)
+    params = backend.engine.chat.call_args.kwargs["sampling_params"]
+    assert params["thinking_token_budget"] == 1024 and params["max_tokens"] == 4096
+    backend.invoke([HumanMessage(content="Initial assumption")], enable_thinking=True,
+                   thinking_token_budget=6144, max_tokens=8192)
+    assert backend.engine.chat.call_args.kwargs["sampling_params"]["thinking_token_budget"] == 6144
+    backend.invoke([HumanMessage(content="Observe")], max_tokens=512)
+    assert "thinking_token_budget" not in backend.engine.chat.call_args.kwargs["sampling_params"]
+
+
+def test_native_budget_cannot_consume_entire_generation(backend):
+    backend.thinking_token_budget = 1024
+    with pytest.raises(ValueError, match="leave room"):
+        backend.invoke([HumanMessage(content="Choose")], enable_thinking=True, max_tokens=1024)
+    backend.engine.chat.assert_not_called()
+
+
+def test_unsupported_thinking_budget_fails_before_gpu_load(tmp_path, monkeypatch):
+    (tmp_path / "config.json").write_text('{"model_type": "gemma4"}')
+    engine = Mock()
+    def old_sampling_params(max_tokens):
+        return {"max_tokens": max_tokens}
+    monkeypatch.setitem(sys.modules, "vllm", SimpleNamespace(LLM=engine, SamplingParams=old_sampling_params))
+    monkeypatch.setitem(sys.modules, "vllm.config", SimpleNamespace(ReasoningConfig=lambda **kw: kw))
+    monkeypatch.setitem(sys.modules, "transformers", SimpleNamespace(AutoProcessor=SimpleNamespace(
+        from_pretrained=lambda *a, **kw: SimpleNamespace(image_processor=object(), chat_template="native"))))
+    with pytest.raises(RuntimeError, match="lacks native thinking-budget support"):
+        load_vllm(ModelConfig(backend="vllm"), str(tmp_path))
+    engine.assert_not_called()

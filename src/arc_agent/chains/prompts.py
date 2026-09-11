@@ -98,6 +98,7 @@ PROMPT_COMP_ASSUME = (
     "World model: <what visual elements carried over or shifted>\n"
     "Goal model: <updated objective for this level>\n"
     "Action model: <refined understanding of action mechanics>\n"
+    "Actions: Some actions provide motion, while some provide interaction. Identify which actions are likely to be useful in this level.\n"
     "Recent findings: <new shapes or color variations observed in this level>\n"
     "Plan: <updated plan for solving this level>"
 )
@@ -105,7 +106,7 @@ PROMPT_COMP_ASSUME = (
 PROMPT_ANALYSE_VISUAL = (
     "Analyze the visual change caused by the last action using the pixel diff bounding box in English.\n"
     "Use these labeled fields: Recent findings: <observed changes only>; Open questions: <uncertain cause or goal progress>."
-    "Put each field on its own line. A changed board alone does not prove progress."
+    "Put each field on its own line. A changed board alone does not prove progress. "
     "Check for any new objects, colors, or shapes. If the board is unchanged, note that as well."
 )
 

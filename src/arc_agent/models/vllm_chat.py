@@ -16,6 +16,7 @@ class VLLMChatModel(GemmaTransformersChatModel):
     engine: Any = Field(default=None)
     thinking_active: bool = False
     last_generation_info: dict = Field(default_factory=dict)
+    thinking_token_budget: int | None = None
 
     @property
     def _llm_type(self):
@@ -27,6 +28,12 @@ class VLLMChatModel(GemmaTransformersChatModel):
         formatted, images = self._extract_images_and_text(messages)
         reserve = kwargs.get("max_new_tokens", kwargs.get("max_tokens", 128))
         self.thinking_active = kwargs.get("enable_thinking", False)
+        thinking_budget = kwargs.get("thinking_token_budget", self.thinking_token_budget)
+        sampling_options = {}
+        if self.thinking_active and thinking_budget is not None:
+            if not isinstance(thinking_budget, int) or not 0 < thinking_budget < reserve:
+                raise ValueError("thinking_token_budget must be positive and smaller than max_tokens to leave room for the final answer.")
+            sampling_options["thinking_token_budget"] = thinking_budget
         # CPU processor expansion preserves the existing context compaction rules.
         # No Transformers model is loaded and no input tensors are moved to CUDA.
         self._prepare_inputs(formatted, images, reserve)
@@ -49,6 +56,7 @@ class VLLMChatModel(GemmaTransformersChatModel):
             repetition_penalty=kwargs.get("repetition_penalty", self.repeat_penalty),
             max_tokens=reserve, stop=None if self.thinking_active else stop or None,
             skip_special_tokens=not self.thinking_active,
+            **sampling_options,
         )
         result = self.engine.chat(chat, sampling_params=params, use_tqdm=False,
                                   chat_template_kwargs={"enable_thinking": self.thinking_active})
@@ -59,6 +67,7 @@ class VLLMChatModel(GemmaTransformersChatModel):
             "generated_tokens": len(getattr(output, "token_ids", []) or []),
             "max_tokens": reserve,
             "thinking_enabled": self.thinking_active,
+            "thinking_token_budget": sampling_options.get("thinking_token_budget"),
         }
         if self.thinking_active:
             # Gemma's thought channel is internal deliberation, not an action or belief update.
@@ -98,17 +107,38 @@ def load_vllm(config, model_id):
                                               trust_remote_code=config.trust_remote_code)
     if not getattr(processor, "image_processor", None) or not getattr(processor, "chat_template", None):
         raise RuntimeError("vLLM Eye/Brain requires the checkpoint's multimodal processor and chat template.")
+    metadata = json.loads((Path(model_id) / "config.json").read_text(encoding="utf-8"))
+    reasoning_options = {}
+    thinking_budget = None
+    if str(metadata.get("model_type", "")).startswith("gemma4"):
+        # Configure native reasoning boundaries before creating the GPU engine.
+        # max_tokens alone can be consumed entirely by thoughts, leaving no action.
+        try:
+            from vllm import SamplingParams
+            from vllm.config import ReasoningConfig
+            SamplingParams(max_tokens=2048, thinking_token_budget=1024)
+            reasoning_options["reasoning_config"] = ReasoningConfig(
+                reasoning_start_str="<|channel>thought\n", reasoning_end_str="<channel|>",
+            )
+        except (ImportError, TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "This vLLM wheelhouse lacks native thinking-budget support. "
+                "Use a compatible vLLM build with SamplingParams.thinking_token_budget "
+                "and ReasoningConfig before loading Gemma 4."
+            ) from exc
+        thinking_budget = 1024
     engine = LLM(
         model=model_id, tokenizer=model_id, trust_remote_code=config.trust_remote_code,
         dtype="auto", tensor_parallel_size=1, max_model_len=config.max_context_length,
         gpu_memory_utilization=config.vllm_gpu_memory_utilization,
         max_num_seqs=1, limit_mm_per_prompt={"image": 2},
         enforce_eager=config.vllm_enforce_eager,
+        **reasoning_options,
     )
     # Record checkpoint metadata without loading a second model.
     from types import SimpleNamespace
-    metadata = json.loads((Path(model_id) / "config.json").read_text(encoding="utf-8"))
     return VLLMChatModel(engine=engine, model=SimpleNamespace(config=metadata),
+                         thinking_token_budget=thinking_budget,
                          processor=processor, max_context_length=config.max_context_length,
                          temperature=config.temperature, top_p=config.top_p,
                          repeat_penalty=config.repeat_penalty)

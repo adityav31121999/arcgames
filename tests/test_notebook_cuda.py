@@ -21,7 +21,8 @@ def configure():
         check_output=lambda command, **kw: "release 12.8," if Path(command[0]).parent.parent.name == "old" else "release 12.9,",
         STDOUT=subprocess.STDOUT, CalledProcessError=subprocess.CalledProcessError),
         sys=SimpleNamespace(modules={}),
-        torch=SimpleNamespace(cuda=SimpleNamespace(get_device_capability=lambda _: (12, 0))))
+        torch=SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True,
+                                                  get_device_capability=lambda _: (12, 0))))
     exec(compile(tree, str(notebook), "exec"), namespace)
     return namespace["configure_blackwell_toolkit"], namespace
 
@@ -114,4 +115,34 @@ def test_no_matching_headers_fails_before_selecting_toolkit(configure, tmp_path)
     ns["subprocess"].check_output = check_output
     with pytest.raises(RuntimeError, match="matching major/minor"):
         fn([toolkit(tmp_path, "mismatch")])
+    assert "CUDA_HOME" not in ns["os"].environ
+
+
+def test_discovers_cu13_compiler_in_secondary_python_path(configure, tmp_path, monkeypatch):
+    import shutil
+
+    fn, ns = configure
+    secondary = tmp_path / "other-python/site-packages"
+    root = toolkit(secondary, "nvidia/cu13")
+    (root / "bin").mkdir()
+    (root / "bin/nvcc").touch()
+    ns["sys"].path = [str(secondary)]
+    ns["sysconfig"] = SimpleNamespace(get_paths=lambda: {"purelib": str(tmp_path / "primary")})
+    monkeypatch.setattr(shutil, "which", lambda _: None)
+
+    def compiler_probe(command, **kwargs):
+        if Path(command[0]).parent.parent == root:
+            return "release 13.0," if "--version" in command else ""
+        raise FileNotFoundError(command[0])
+
+    ns["subprocess"].check_output = compiler_probe
+    fn()
+    assert ns["os"].environ["CUDA_HOME"] == str(root)
+
+
+def test_conflicting_flashinfer_compiler_override_is_rejected(configure, tmp_path):
+    fn, ns = configure
+    ns["os"].environ["FLASHINFER_NVCC"] = str(tmp_path / "old/bin/nvcc")
+    with pytest.raises(RuntimeError, match="FLASHINFER_NVCC conflicts"):
+        fn([toolkit(tmp_path, "new")])
     assert "CUDA_HOME" not in ns["os"].environ
