@@ -140,7 +140,6 @@ arcgame/
     └── test_chains.py          # Tests for Eye perception and Brain planning/review
 ```
 
-
 ---
 
 ## 🛠️ Quickstart
@@ -164,6 +163,7 @@ cp .env.example .env
 ```
 
 Default configuration in `configs/default.yaml`:
+
 ```yaml
 model:
   model_id: "nvidia/Gemma-4-26B-A4B-NVFP4"
@@ -204,10 +204,12 @@ Upon completion, the agent automatically renders `/kaggle/working/submission.par
 Two ready-to-use notebooks are available in `notebooks/`:
 
 ### 1. `notebooks/sample_run_single_game.ipynb`
+
 - **Purpose**: Interactive single-game exploration and debugging (e.g. `s5i5`).
 - **Features**: Live step-by-step visual grid display, perception/reasoning chain introspection, trajectory inspection, and markdown scratchpad review.
 
 ### 2. `notebooks/submission_run.ipynb`
+
 - **Purpose**: Full automated Kaggle tournament submission notebook.
 - **Features**:
   - Automatically detects real competition rerun (`KAGGLE_IS_COMPETITION_RERUN` / `TRUE_SUBMISSION`).
@@ -219,7 +221,6 @@ Two ready-to-use notebooks are available in `notebooks/`:
 ---
 
 ## 🧪 Running Unit Tests
-
 
 Execute the comprehensive test suite with `pytest`:
 

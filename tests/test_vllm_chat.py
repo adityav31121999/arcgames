@@ -89,7 +89,7 @@ def test_vllm_loader_uses_local_checkpoint_and_no_transformers_weights(tmp_path,
     wrapper = load_vllm(ModelConfig(backend="vllm", max_context_length=32768), str(tmp_path))
     assert wrapper.engine is llm.return_value
     assert llm.call_args.kwargs["tensor_parallel_size"] == 1
-    assert llm.call_args.kwargs["limit_mm_per_prompt"] == {"image": 2}
+    assert llm.call_args.kwargs["limit_mm_per_prompt"] == {"image": 2, "video": 0}
     assert llm.call_args.kwargs["max_model_len"] == 32768
     assert auto.from_pretrained.call_args.kwargs["local_files_only"] is True
     assert llm.call_args.kwargs["reasoning_config"] == {

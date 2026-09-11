@@ -11,6 +11,7 @@ class ModelConfig(BaseModel):
     backend: Literal["transformers", "vllm"] = "transformers"
     vllm_gpu_memory_utilization: float = Field(default=0.85, gt=0, lt=1)
     vllm_enforce_eager: bool = True
+    limit_mm_per_prompt: dict = Field(default_factory=lambda: {"image": 2, "video": 0})
     model_id: str = Field(
         default="nvidia/Gemma-4-26B-A4B-NVFP4",
         description="HuggingFace model ID or local directory path",

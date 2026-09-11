@@ -127,11 +127,12 @@ def load_vllm(config, model_id):
                 "and ReasoningConfig before loading Gemma 4."
             ) from exc
         thinking_budget = 1024
+    limit_mm = getattr(config, "limit_mm_per_prompt", None) or {"image": 2, "video": 0}
     engine = LLM(
         model=model_id, tokenizer=model_id, trust_remote_code=config.trust_remote_code,
         dtype="auto", tensor_parallel_size=1, max_model_len=config.max_context_length,
         gpu_memory_utilization=config.vllm_gpu_memory_utilization,
-        max_num_seqs=1, limit_mm_per_prompt={"image": 2},
+        max_num_seqs=1, limit_mm_per_prompt=limit_mm,
         enforce_eager=config.vllm_enforce_eager,
         **reasoning_options,
     )
