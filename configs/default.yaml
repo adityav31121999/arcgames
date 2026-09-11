@@ -17,7 +17,7 @@ model:
   top_p: 0.95
   repeat_penalty: 1.0
   max_new_tokens_eye: 384
-  max_new_tokens_brain: 1024
+  max_new_tokens_brain: 1536
   brain_enable_thinking: true
   brain_review_max_tokens: 2048
 

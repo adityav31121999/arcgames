@@ -59,7 +59,7 @@ def test_stage_budgets_keep_shared_model_and_restore_routine_eye(tmp_path, monke
     agent.eye.analyse_visual("game", state, compute_transition(state, state), "No change")
     assert calls[-1].get("enable_thinking", False) is False
     assert calls[-1]["max_tokens"] == 384
-    assert agent.brain.enable_thinking and agent.brain.max_tokens == 1024
+    assert agent.brain.enable_thinking and agent.brain.max_tokens == 1536
     assert not agent.debugger.enable_thinking and agent.debugger.max_tokens == 384
 
 
@@ -107,7 +107,7 @@ def test_complete_notebook_initializes_stage_budgets_without_patch(tmp_path):
     agent = namespace["agent"]
     assert agent.eye is namespace["eye_chain"]
     assert agent.eye.assumption_max_tokens == 1536 and agent.eye.max_tokens == 384
-    assert agent.brain.enable_thinking and agent.brain.max_tokens == 1024
+    assert agent.brain.enable_thinking and agent.brain.max_tokens == 1536
     assert not agent.debugger.enable_thinking and agent.debugger.max_tokens == 384
     assert namespace["runner"].agent is agent
     assert len(model.callbacks) == 1

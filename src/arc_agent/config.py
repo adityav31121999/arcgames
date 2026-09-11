@@ -32,7 +32,7 @@ class ModelConfig(BaseModel):
     top_p: float = Field(default=0.95)
     repeat_penalty: float = Field(default=1.0)
     max_new_tokens_eye: int = Field(default=384)
-    max_new_tokens_brain: int = Field(default=1024)
+    max_new_tokens_brain: int = Field(default=1536)
     brain_enable_thinking: bool = True
     brain_review_max_tokens: int = Field(default=2048)
 

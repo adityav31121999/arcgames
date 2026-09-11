@@ -118,6 +118,29 @@ def test_native_budget_cannot_consume_entire_generation(backend):
     backend.engine.chat.assert_not_called()
 
 
+def test_brain_chain_auto_clamps_thinking_budget_when_budget_equals_max_tokens(backend):
+    from arc_agent.chains.brain import BrainChain
+    backend.thinking_token_budget = 1024
+    backend.engine.chat.return_value[0].outputs[0].text = "<channel|>ACTION=ACTION1"
+    brain = BrainChain(backend, max_tokens=1024, enable_thinking=True)
+    res = brain._invoke("Choose", max_tokens=1024)
+    assert res == "ACTION=ACTION1"
+    params = backend.engine.chat.call_args.kwargs["sampling_params"]
+    assert params["thinking_token_budget"] == 768 and params["max_tokens"] == 1024
+
+
+def test_brain_chain_preserves_full_thinking_budget_when_max_tokens_is_1536(backend):
+    from arc_agent.chains.brain import BrainChain
+    backend.thinking_token_budget = 1024
+    backend.engine.chat.return_value[0].outputs[0].text = "<channel|>ACTION=ACTION1"
+    brain = BrainChain(backend, max_tokens=1536, enable_thinking=True)
+    res = brain._invoke("Choose", max_tokens=1536)
+    assert res == "ACTION=ACTION1"
+    params = backend.engine.chat.call_args.kwargs["sampling_params"]
+    assert params["thinking_token_budget"] == 1024 and params["max_tokens"] == 1536
+
+
+
 def test_unsupported_thinking_budget_fails_before_gpu_load(tmp_path, monkeypatch):
     (tmp_path / "config.json").write_text('{"model_type": "gemma4"}')
     engine = Mock()

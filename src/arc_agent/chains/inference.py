@@ -42,9 +42,15 @@ def invoke_stage(model, system: str, prompt: str, *, stage: str, max_tokens: int
         if attempt > 1:
             reminder = "\nPrevious inference failed validation. Return non-empty labeled fields: " + ", ".join(required_labels)
         try:
+            actual_max_tokens = max_tokens * (2 if attempt > 1 and "Thinking budget exhausted" in error else 1)
+            call_kwargs = dict(kwargs)
+            if call_kwargs.get("enable_thinking"):
+                model_budget = getattr(model, "thinking_token_budget", None)
+                if model_budget is not None and "thinking_token_budget" not in call_kwargs and model_budget >= actual_max_tokens:
+                    call_kwargs["thinking_token_budget"] = max(64, actual_max_tokens - 256)
             response = model.invoke(
                 build_messages(system, prompt + reminder, images, context),
-                max_tokens=max_tokens * (2 if attempt > 1 and "Thinking budget exhausted" in error else 1), **kwargs,
+                max_tokens=actual_max_tokens, **call_kwargs,
             )
             text = normalize_labels(str(response.content).strip())
             valid = bool(text) and "INFERENCE FAILED" not in text

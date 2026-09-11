@@ -15,13 +15,15 @@ class BrainChain:
     """Core reasoning and action-selection engine."""
 
     def __init__(self, model: BaseChatModel, max_tokens: int = 256, system_prompt: str = SYSTEM_PROMPT,
-                 enable_thinking: bool = False, review_max_tokens: int = 4096):
+                 enable_thinking: bool = False, review_max_tokens: int = 4096,
+                 thinking_token_budget: Optional[int] = None):
         self.model = model
         self.max_tokens = max_tokens
         self.system_prompt = system_prompt
         self.last_review_result = StageResult(False, error="Not run")
         self.enable_thinking = enable_thinking
         self.review_max_tokens = review_max_tokens
+        self.thinking_token_budget = thinking_token_budget
         self.last_error = ""
 
     def set_system_prompt(self, system_prompt: str) -> None:
@@ -31,12 +33,19 @@ class BrainChain:
     def _invoke(self, prompt: str, temperature: float = 0.0, max_tokens: int = 32, stop: Optional[List[str]] = None, image_obj: Optional[Any] = None, action_response: bool = False, context=()) -> str:
         messages = build_messages(self.system_prompt, prompt, [("", image_obj)], context)
         try:
+            actual_max_tokens = max_tokens * (2 if "Thinking budget exhausted" in self.last_error else 1)
             invoke_kwargs = {
                 "temperature": temperature,
-                "max_tokens": max_tokens * (2 if "Thinking budget exhausted" in self.last_error else 1),
+                "max_tokens": actual_max_tokens,
                 "enable_thinking": self.enable_thinking,
                 "raw_output": True,
             }
+            if self.thinking_token_budget is not None:
+                invoke_kwargs["thinking_token_budget"] = self.thinking_token_budget
+            elif self.enable_thinking:
+                model_budget = getattr(self.model, "thinking_token_budget", None)
+                if model_budget is not None and model_budget >= actual_max_tokens:
+                    invoke_kwargs["thinking_token_budget"] = max(64, actual_max_tokens - 256)
             if stop:
                 invoke_kwargs["stop"] = stop
             if action_response:
