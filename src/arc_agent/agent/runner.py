@@ -288,8 +288,9 @@ class ARCRunner:
 
             render_live(current_state, status=f"🔄 Step {step_count + 1}/{max_steps} (Try {iteration}/{max_iterations}){budget_str} — Brain deciding next action...")
 
+            is_stuck = zero_diff_streak > 0
             action, action_data, observation_note = self.agent.decide_action(
-                game_id, level, s0_state, current_state, current_valid_actions, observation_note, budget_context=budget_context
+                game_id, level, s0_state, current_state, current_valid_actions, observation_note, budget_context=budget_context, is_stuck=is_stuck
             )
 
             if getattr(self.agent, "decision_failed", False) or getattr(self.agent, "consecutive_parse_failures", 0) >= 6:

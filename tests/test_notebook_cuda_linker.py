@@ -10,10 +10,14 @@ import pytest
 def linker(monkeypatch):
     notebook = Path(__file__).resolve().parents[1] / "notebooks/assumeAndPlay.ipynb"
     code = "".join(json.loads(notebook.read_text(encoding="utf-8"))["cells"][3]["source"])
+    if "configure_cuda_linker" not in code:
+        code = (Path(__file__).resolve().parents[1] / "notebooks/kaggle_cuda_linker.py").read_text(encoding="utf-8")
     module = ast.parse(code)
     module.body = [node for node in module.body if isinstance(node, ast.FunctionDef)]
     environment = {"LD_LIBRARY_PATH": "/existing/runtime"}
+    import re
     namespace = dict(Path=Path, os=SimpleNamespace(environ=environment, pathsep=":"),
+                     re=re,
                      subprocess=SimpleNamespace(check_output=lambda *a, **kw: "release 13.0,"))
     exec(compile(module, str(notebook), "exec"), namespace)
     return namespace["configure_cuda_linker"], environment

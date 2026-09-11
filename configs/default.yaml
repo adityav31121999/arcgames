@@ -11,15 +11,15 @@ model:
   device: "cuda:0"
   torch_dtype: "bfloat16"
   attn_implementation: "sdpa" # Or "flash_attention_2"
-  max_context_length: 32768
+  max_context_length: 131072
   trust_remote_code: true
   temperature: 0.0
   top_p: 0.95
   repeat_penalty: 1.0
-  max_new_tokens_eye: 768
-  max_new_tokens_brain: 2048
+  max_new_tokens_eye: 384
+  max_new_tokens_brain: 1024
   brain_enable_thinking: true
-  brain_review_max_tokens: 4096
+  brain_review_max_tokens: 2048
 
 agent:
   stuck_threshold: 3

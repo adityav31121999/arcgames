@@ -298,3 +298,17 @@ def test_retry_preserves_review_world_model_and_experiment(agent):
     assert "FAILURE_REASON" not in agent.world_model.to_prompt_block()
     from pathlib import Path
     assert "H1 shared movement" in (Path(agent.memory_root) / "retry_memory/world_model.json").read_text()
+
+
+def test_dynamic_temperature_stuck_vs_normal(agent):
+    env = Environment()
+    s0 = agent.enter_level("temp_test", 1, env.obs(), True, env.action_space)
+    agent.brain.decide_action = Mock(return_value="Plan: move\nACTION=ACTION1")
+
+    # 1. Normal move: temperature should be 0.0
+    agent.decide_action("temp_test", 1, s0, s0, env.action_space, "", is_stuck=False)
+    assert agent.brain.decide_action.call_args.kwargs.get("temperature") == 0.0
+
+    # 2. Stuck / NO-OP move: temperature should switch to 1.0
+    agent.decide_action("temp_test", 1, s0, s0, env.action_space, "", is_stuck=True)
+    assert agent.brain.decide_action.call_args.kwargs.get("temperature") == 1.0

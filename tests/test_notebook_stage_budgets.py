@@ -45,22 +45,22 @@ def test_stage_budgets_keep_shared_model_and_restore_routine_eye(tmp_path, monke
     state = ARCState.create("game", 1, 0, obs)
     agent.eye.assume("game", 1, state, cache)
     assert calls[-1]["enable_thinking"] is True
-    assert calls[-1]["max_tokens"] == 8192
+    assert calls[-1]["max_tokens"] == 1536
     assert agent.eye.model is agent.brain.model is agent.debugger.model is model
-    assert agent.eye.max_tokens == 512
+    assert agent.eye.max_tokens == 384
 
     # Applying the cell again must preserve completed assumptions and avoid duplicate logging.
     patch(agent, config)
     assert len(model.callbacks) == 1
     agent.eye.assume("game", 1, state, cache)
     assert calls[-1].get("enable_thinking", False) is False
-    assert calls[-1]["max_tokens"] == 512
+    assert calls[-1]["max_tokens"] == 384
     agent.eye.compare_assume("game", 2, state, cache)
     agent.eye.analyse_visual("game", state, compute_transition(state, state), "No change")
     assert calls[-1].get("enable_thinking", False) is False
-    assert calls[-1]["max_tokens"] == 512
-    assert agent.brain.enable_thinking and agent.brain.max_tokens == 4096
-    assert not agent.debugger.enable_thinking and agent.debugger.max_tokens == 768
+    assert calls[-1]["max_tokens"] == 384
+    assert agent.brain.enable_thinking and agent.brain.max_tokens == 1024
+    assert not agent.debugger.enable_thinking and agent.debugger.max_tokens == 384
 
 
 def test_initial_assumption_exception_restores_eye_model(monkeypatch):
@@ -73,7 +73,7 @@ def test_initial_assumption_exception_restores_eye_model(monkeypatch):
     monkeypatch.setattr(EyeChain, "assume", fail)
     with pytest.raises(RuntimeError, match="failed assumption"):
         eye.assume("game")
-    assert eye.model is model and eye.max_tokens == 512
+    assert eye.model is model and eye.max_tokens == 384
     assert not eye.assumed_games
 
 
@@ -101,13 +101,13 @@ def test_complete_notebook_initializes_stage_budgets_without_patch(tmp_path):
                      ARCLangChainAgent=ARCLangChainAgent, ARCRunner=ARCRunner,
                      GameStateResolver=GameStateResolver,
                      torch=SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False,
-                                                               is_bf16_supported=lambda: False)))
+                                                                is_bf16_supported=lambda: False)))
     exec(compile(definitions, str(path), "exec"), namespace)
     exec(compile(initialization, str(path), "exec"), namespace)
     agent = namespace["agent"]
     assert agent.eye is namespace["eye_chain"]
-    assert agent.eye.assumption_max_tokens == 8192 and agent.eye.max_tokens == 512
-    assert agent.brain.enable_thinking and agent.brain.max_tokens == 4096
-    assert not agent.debugger.enable_thinking and agent.debugger.max_tokens == 768
+    assert agent.eye.assumption_max_tokens == 1536 and agent.eye.max_tokens == 384
+    assert agent.brain.enable_thinking and agent.brain.max_tokens == 1024
+    assert not agent.debugger.enable_thinking and agent.debugger.max_tokens == 384
     assert namespace["runner"].agent is agent
     assert len(model.callbacks) == 1

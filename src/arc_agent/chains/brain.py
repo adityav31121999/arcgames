@@ -61,6 +61,7 @@ class BrainChain:
         budget_context: str = "",
         object_list: str = "",
         click_history: str = "",
+        temperature: float = 0.0,
     ) -> str:
         """Determines next discrete or complex coordinate action."""
         context = cache.context_sections(game_id, level)
@@ -112,7 +113,7 @@ Next action:"""
 
         return self._invoke(
             prompt,
-            temperature=0.0,
+            temperature=temperature,
             max_tokens=self.max_tokens,
             stop=["[END_ACTION]"],
             image_obj=current_state.get_pil_image(),

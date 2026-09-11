@@ -124,6 +124,8 @@ def test_repetition_penalty_defaults_are_disabled():
     assert GemmaTransformersChatModel().repeat_penalty == 1.0
     config_path = Path(__file__).resolve().parents[1] / "configs" / "default.yaml"
     assert AppConfig.from_yaml(config_path).model.repeat_penalty == 1.0
+    kaggle_config = Path(__file__).resolve().parents[1] / "configs" / "kaggle_offline.yaml"
+    assert AppConfig.from_yaml(kaggle_config).model.repeat_penalty == 1.0
 
 
 @pytest.mark.parametrize("actions", [[Action.ACTION1, Action.ACTION2], [Action.ACTION6]])

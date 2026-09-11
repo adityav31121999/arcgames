@@ -172,6 +172,7 @@ class ARCLangChainAgent:
         valid_actions: List[Any],
         observation_note: str,
         budget_context: str = "",
+        is_stuck: bool = False,
     ) -> Tuple[Any, Dict[str, Any], str]:
         """Decides next action using Brain chain with formatting retries and heuristics fallbacks."""
         grid_shape = current_state.grid.shape if current_state.grid is not None else None
@@ -184,6 +185,10 @@ class ARCLangChainAgent:
         behavior_warning = self.memory.consecutive_action_warning(threshold=5)
         trajectory_ctx = self.memory.recent_trajectory_text()
         sprite_highlight = self.memory.get_sprite_guidance()
+
+        # Dynamic temperature: 1.0 when repeating moves, looping, or stuck in a NO-OP, else 0.0
+        stuck_or_looping = bool(is_stuck) or bool(warning) or bool(behavior_warning)
+        temperature = 1.0 if stuck_or_looping else 0.0
 
         context_note = "\n".join(
             x
@@ -213,6 +218,7 @@ class ARCLangChainAgent:
             budget_context=budget_context,
             object_list=object_list,
             click_history=click_history,
+            temperature=temperature,
         )
         action, action_data = ARCActionMapper.parse(raw, allowed_actions, grid_shape, prohibited=prohibited)
         if action is not None:
@@ -241,6 +247,7 @@ class ARCLangChainAgent:
             budget_context=budget_context,
             object_list=object_list,
             click_history=click_history,
+            temperature=temperature,
         )
         action, action_data = ARCActionMapper.parse(raw_retry, allowed_actions, grid_shape, prohibited=prohibited)
         if action is not None:
