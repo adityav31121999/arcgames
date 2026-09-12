@@ -74,11 +74,11 @@ class ARCLangChainAgent:
 
     def set_system_prompt(self, system_prompt: str) -> None:
         """Sets the system prompt across all LangChain chains."""
-        if hasattr(self, "debugger"):
+        if getattr(self, "debugger", None) is not None and hasattr(self.debugger, "set_system_prompt"):
             self.debugger.set_system_prompt(system_prompt)
-        if hasattr(self.eye, "set_system_prompt"):
+        if getattr(self, "eye", None) is not None and hasattr(self.eye, "set_system_prompt"):
             self.eye.set_system_prompt(system_prompt)
-        if hasattr(self.brain, "set_system_prompt"):
+        if getattr(self, "brain", None) is not None and hasattr(self.brain, "set_system_prompt"):
             self.brain.set_system_prompt(system_prompt)
 
     def enter_level(

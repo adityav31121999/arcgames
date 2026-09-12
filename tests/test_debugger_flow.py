@@ -65,3 +65,14 @@ def test_invalid_stage_includes_final_preview_without_accepting_it():
     result = invoke_stage(model, '', '', stage='Debugger', max_tokens=100, required_labels=('Plan',))
     assert not result.ok and not result.text
     assert 'coherent answer' in result.error
+
+
+def test_set_action_space_when_debugger_none_or_deleted(agent):
+    # Case 1: debugger attribute is explicitly None
+    agent.debugger = None
+    agent.set_action_space(["ACTION1", "ACTION2"])
+
+    # Case 2: debugger attribute is deleted
+    del agent.debugger
+    agent.set_action_space(["ACTION1", "ACTION2"])
+
