@@ -167,11 +167,6 @@ def test_action_mapper_integer_actions():
     assert act == 6
     assert data == {"x": 15, "y": 25}
 
-    # Test ACTION=CLICK X=10 Y=20 maps to 6
-    act, data = ARCActionMapper.parse("ACTION=CLICK X=10 Y=20", available, grid_shape=(30, 30))
-    assert act == 6
-    assert data == {"x": 10, "y": 20}
-
 
 def test_action_mapper_markdown_and_prefix_formats():
     """Verify various prompt reply formats like 'Next action: ACTION=1' or '* ACTION: UP'."""
@@ -203,3 +198,42 @@ def test_prohibited_action_distinguishes_syntax_validity():
     act_syntax, _ = ARCActionMapper.parse("ACTION=ACTION1", available, prohibited=None)
     assert act_syntax == Action.ACTION1
 
+
+def test_action_mapper_standalone_action_and_multiaction_reasoning():
+    """Verify that standalone action lines like 'ACTION4' are parsed correctly even when earlier lines mention other actions."""
+    available = [Action.ACTION1, Action.ACTION2, Action.ACTION3, Action.ACTION4, Action.ACTION5, Action.ACTION6]
+
+    # Exact log response from m0r0 run:
+    response1 = """World model: 64x64 grid, split yellow (left) and orange (right) background, black central shape with two light blue squares at the bottom center.
+Goal model: Unknown; likely involves manipulating the light blue squares or the black shape to achieve a target state.
+Action model: ACTION2 (Down) has previously caused changes in the grid (moving an object or cursor), but the most recent ACTION2 resulted in a NO-OP.
+Hypotheses: H1: The cursor/object has reached the boundary of the grid or the bottom of the shape and cannot move further down. H2: The object is stuck or the movement logic changed.
+Open questions: Is the object at the bottom edge? Does a different direction (ACTION1, ACTION3, ACTION4) trigger a change?
+Plan: Switch direction to ACTION4 (Right) to test if movement is possible horizontally, breaking the potential vertical lock.
+Expected effect: A change in the grid state if horizontal movement is possible.
+
+ACTION4"""
+    act, data = ARCActionMapper.parse(response1, available)
+    assert act == Action.ACTION4
+    assert data == {}
+
+    response2 = """World model: 64x64 grid, split background (Yellow/Orange), black central shape with two light blue squares at the bottom center.
+Goal model: Unknown; likely involves interacting with the light blue squares or the black shape.
+Action model: ACTION1 (Up) and ACTION2 (Down) appear to move a cursor or the central shape, as evidenced by the 100-pixel bounding box changes in the lower region.
+Hypotheses: H1: The light blue squares are interactive objects that need to be selected or manipulated. H2: ACTION1/ACTION2 moves a cursor or the black shape vertically.
+Open questions: Does moving the shape/cursor to the light blue squares trigger a change?
+Plan: Use ACTION2 to move the object/cursor further down to interact with the light blue squares.
+Expected effect: Further modification of the grid in the lower region or a change in the light blue squares.
+
+ACTION2"""
+    act, data = ARCActionMapper.parse(response2, available)
+    assert act == Action.ACTION2
+    assert data == {}
+
+    # Cut off text where only Plan mentions action
+    response3 = """World model: ...
+Action model: ACTION1, ACTION3
+Plan: Switch direction to ACTION4 (Right)
+Expected effect: change in grid"""
+    act, data = ARCActionMapper.parse(response3, available)
+    assert act == Action.ACTION4

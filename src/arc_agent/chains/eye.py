@@ -15,7 +15,7 @@ from .prompts import PROMPT_ANALYSE_VISUAL, PROMPT_ASSUME, PROMPT_COMP_ASSUME, S
 class EyeChain:
     """Multimodal vision perception chain processing visual grid layouts and pixel changes."""
 
-    def __init__(self, model: BaseChatModel, max_tokens: int = 512, system_prompt: str = SYSTEM_PROMPT):
+    def __init__(self, model: BaseChatModel, max_tokens: int = 1024, system_prompt: str = SYSTEM_PROMPT):
         self.model = model
         self.max_tokens = max_tokens
         self.system_prompt = system_prompt
@@ -26,7 +26,7 @@ class EyeChain:
         self.system_prompt = system_prompt
 
     def _invoke(self, prompt: str, image_obj: Optional[Any] = None, *, images=None,
-                context=(), required_labels=("World model", "Goal model", "Action model", "Recent findings", "Plan")) -> str:
+                context=(), required_labels=("World model", "Goal model", "Action model", "Plan")) -> str:
         self.last_result = invoke_stage(
             self.model, self.system_prompt, prompt, stage="Vision", max_tokens=self.max_tokens,
             images=images if images is not None else [("Current board", image_obj)],

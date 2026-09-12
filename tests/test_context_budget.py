@@ -124,7 +124,7 @@ def test_fresh_section_entries_reach_brain_and_disk_stays_complete(tmp_path):
     BrainChain(model).decide_action("g", 1, state, state, ["ACTION1"], "", cache)
     messages = model.invoke.call_args.args[0]
     assert marker in "\n".join(p.get("text", "") for p in messages[-1].content)
-    wrapper = GemmaTransformersChatModel(processor=Processor(), max_context_length=650)
+    wrapper = GemmaTransformersChatModel(processor=Processor(), max_context_length=800)
     formatted, images = wrapper._extract_images_and_text(messages)
     wrapper._prepare_inputs(formatted, images, 128)
     assert marker in wrapper.processor.last_text

@@ -61,6 +61,29 @@ def test_oscillation_avoidance():
     assert Action.ACTION4 in allowed
 
 
+def test_multistep_cycle_avoidance():
+    """Verify that 3-step cycles (A -> B -> C -> A) are detected and filtered."""
+    mem = TrajectoryMemory()
+    mem.reset("hash_A")
+
+    sig_left = ActionSignature.from_action(Action.ACTION3)
+    sig_right = ActionSignature.from_action(Action.ACTION4)
+
+    # A -> B via ACTION3
+    mem.record_transition("hash_A", sig_left, "hash_B", changed=True)
+    # B -> C via ACTION4
+    mem.record_transition("hash_B", sig_right, "hash_C", changed=True)
+    # C -> A via ACTION4 (3-step cycle!)
+    mem.record_transition("hash_C", sig_right, "hash_A", changed=True)
+
+    # Now at A again: ACTION3 leads to B, which continues the cycle
+    allowed = mem.get_allowed_actions("hash_A", [Action.ACTION1, Action.ACTION2, Action.ACTION3])
+    assert Action.ACTION3 not in allowed
+    assert Action.ACTION1 in allowed
+    assert Action.ACTION2 in allowed
+
+
+
 @pytest.mark.parametrize("x,y", [(8, 6), (1, 1), (15, 15)])
 def test_sprite_region_tracking(x, y):
     mem = TrajectoryMemory()

@@ -177,18 +177,23 @@ Final game state reached: {final_state_name}
 
 Review the attached initial/final boards and memory context. Distinguish hypotheses from evidence."""
         prompt += """
-Also return World model:, Goal model:, Action model:, Hypotheses:, Open questions:,
-Plan:, and Expected effect: as concise final labeled fields BEFORE FAILURE_REASON and RULES.
-Compare at least two explanations against specific action/step evidence, reject contradicted
-claims, and specify a different experiment for the next try. Coordinates only affect ACTION6.
-Repeated board changes alone do not establish goal progress. Preserve discoveries across retries.
+Return your review using these labeled fields, placing FAILURE_REASON and RULES first so discoveries are preserved:
+FAILURE_REASON: <one sentence on search strategy flaw or navigation error>
+RULES:
+- <candidate verified rule or mechanic discovered>
+World model: <layout and object roles>
+Goal model: <updated objective hypothesis>
+Action model: <observed button effects>
+Hypotheses: <competing explanations>
+Plan: <concrete action plan for next try>
+Expected effect: <predicted observable change>
 """
 
         self.last_review_result = invoke_stage(
             self.model, self.system_prompt, prompt, stage="Brain review", max_tokens=self.review_max_tokens,
             images=[("Initial board", s0_state.get_pil_image()), ("Final board", final_state.get_pil_image())],
             context=cache.context_sections(game_id, level) + [context_part("Current working world model", world_model_block, 0, "head")],
-            required_labels=("FAILURE_REASON", "RULES", "Action model", "Hypotheses", "Plan"),
+            required_labels=("FAILURE_REASON", "RULES"),
             temperature=0.0, enable_thinking=self.enable_thinking,
         )
         return self.last_review_result.text

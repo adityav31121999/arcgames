@@ -207,12 +207,30 @@ class TrajectoryMemory:
                 parts.append(f"{step.action_sig} [{tag}]")
         return " -> ".join(parts) if parts else "No moves yet"
 
+    def oscillation_targets(self) -> Set[str]:
+        """Returns set of state hashes that continue recent cycles (length 2 to 6)."""
+        targets = set()
+        n = len(self.state_history)
+        if n < 3:
+            return targets
+        current = self.state_history[-1]
+        start_lookback = max(0, n - 13)
+        for i in range(n - 2, start_lookback - 1, -1):
+            if self.state_history[i] == current:
+                cycle_len = n - 1 - i
+                if 2 <= cycle_len <= 6:
+                    targets.add(self.state_history[i + 1])
+        return targets
+
     def oscillation_target(self) -> Optional[str]:
-        if len(self.state_history) < 3:
-            return None
-        if self.state_history[-1] == self.state_history[-3]:
-            return self.state_history[-2]
-        return self.state_history[-3]
+        targets = self.oscillation_targets()
+        if targets:
+            return next(iter(targets))
+        if len(self.state_history) >= 3:
+            if self.state_history[-1] == self.state_history[-3]:
+                return self.state_history[-2]
+            return self.state_history[-3]
+        return None
 
     def tried_coords_for_action(self, state_hash: str, action_name: str) -> List[Tuple[int, int]]:
         coords = []
@@ -291,8 +309,13 @@ class TrajectoryMemory:
         if not allowed:
             allowed = list(valid_actions)
 
-        osc_target = self.oscillation_target()
-        if osc_target is not None:
+        osc_targets = self.oscillation_targets()
+        if not osc_targets:
+            single = self.oscillation_target()
+            if single:
+                osc_targets = {single}
+
+        if osc_targets:
 
             def _leads_to_oscillation(a: Any) -> bool:
                 name = canonical_action_name(a)
@@ -300,7 +323,7 @@ class TrajectoryMemory:
                     if sig.name != name:
                         continue
                     result = self.transition_model.get((state_hash, sig))
-                    if result and result[0] == osc_target:
+                    if result and result[0] in osc_targets:
                         return True
                 return False
 

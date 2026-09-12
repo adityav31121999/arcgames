@@ -363,8 +363,16 @@ class ARCLangChainAgent:
                         context_note + f"\n[PARSER NOTICE] Fallback: untried coordinate {coord}.",
                     )
 
-        # 3. Forced move fallback
-        fallback_act = allowed_actions[0]
+        # 3. Forced move fallback: prefer action different from last_action to prevent repetition lock
+        simple_candidates = [a for a in allowed_actions if not is_complex_action(a)]
+        if simple_candidates:
+            last_act_name = getattr(self.memory, "_last_action", None)
+            fallback_act = min(
+                simple_candidates,
+                key=lambda a: 1 if canonical_action_name(a) == last_act_name else 0,
+            )
+        else:
+            fallback_act = allowed_actions[0]
         fallback_data = {}
         if grid_shape and is_complex_action(fallback_act):
             coord = self._untried_coordinate(fallback_act, state_hash, grid_shape, force=True)

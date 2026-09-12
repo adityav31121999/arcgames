@@ -4,7 +4,10 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 import re
 
-_ACTION_RE = re.compile(r".*\bACTION\*{0,2}\s*[:=]\s*([A-Za-z0-9_]+)\b(.*)$", re.IGNORECASE)
+_ACTION_RE = re.compile(
+    r"^\s*[-*]*\s*(?:(?:NEXT\s+)?ACTION\*{0,2}\s*(?:[:=]\s*(?:ACTION\s*[:=]\s*)?|\s+(?=\d))\s*([A-Za-z0-9_]+)|(ACTION[1-7]|RESET|UP|DOWN|LEFT|RIGHT|INTERACT|CLICK)\b)(.*)$",
+    re.IGNORECASE,
+)
 _COORD_RE = re.compile(r"\bX\s*[:=]\s*(-?\d+)\D+Y\s*[:=]\s*(-?\d+)", re.IGNORECASE)
 
 _ACTION_NAME_ALIASES: Dict[str, str] = {
@@ -140,17 +143,21 @@ class ARCActionMapper:
 
         selected_action, action_data = None, {}
 
-        for line in response_text.splitlines():
-            m = _ACTION_RE.match(line.strip())
+        lines = [line.strip() for line in response_text.splitlines() if line.strip()]
+        for line in reversed(lines):
+            m = _ACTION_RE.match(line)
             if not m:
                 continue
-            candidate = ARCActionMapper._find_action(m.group(1), available_actions)
+            act_candidate_str = m.group(1) or m.group(2)
+            if not act_candidate_str:
+                continue
+            candidate = ARCActionMapper._find_action(act_candidate_str, available_actions)
             if candidate is None:
                 continue
             selected_action = candidate
-            rest = m.group(2)
+            rest = m.group(3) if len(m.groups()) >= 3 else ""
 
-            coords = extract_coordinates(rest, grid_shape) or extract_coordinates(response_text, grid_shape)
+            coords = extract_coordinates(rest, grid_shape) or extract_coordinates(line, grid_shape) or extract_coordinates(response_text, grid_shape)
             if coords and is_complex_action(candidate):
                 action_data = coords
 
@@ -159,7 +166,7 @@ class ARCActionMapper:
             break
 
         if selected_action is None:
-            # Fallback search for action names or aliases mentioned as whole words
+            # Fallback search for action names or aliases mentioned in response_text
             matched_candidates = []
             for a in available_actions:
                 act_name = getattr(a, "name", str(a)).upper()
@@ -174,6 +181,23 @@ class ARCActionMapper:
                 coords = extract_coordinates(response_text, grid_shape)
                 if coords and is_complex_action(selected_action):
                     action_data = coords
+            elif len(matched_candidates) > 1:
+                # Pick the action candidate mentioned latest in response_text (decision at the end)
+                last_pos = -1
+                best_cand = None
+                for a in matched_candidates:
+                    act_name = getattr(a, "name", str(a)).upper()
+                    act_val = str(getattr(a, "value", a)).upper()
+                    for pattern in (r"\b" + re.escape(act_name) + r"\b", r"\b" + re.escape(act_val) + r"\b"):
+                        for match in re.finditer(pattern, response_text.upper()):
+                            if match.start() > last_pos:
+                                last_pos = match.start()
+                                best_cand = a
+                if best_cand is not None:
+                    selected_action = best_cand
+                    coords = extract_coordinates(response_text, grid_shape)
+                    if coords and is_complex_action(selected_action):
+                        action_data = coords
             else:
                 return None, {}
 
