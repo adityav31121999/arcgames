@@ -154,3 +154,48 @@ def test_runner_fast_step_eval(tmp_path):
     assert runner.total_actions_taken == 2
     assert runner.fast_step_eval is True
 
+
+def test_runner_macro_repeat_execution(tmp_path):
+    """Test that runner executes macro repeat actions sequentially without extra LLM calls."""
+    agent = _build_test_agent(tmp_path)
+    # Mock decide_action to return ACTION1 with repeat=3
+    agent.brain.decide_action = lambda *args, **kwargs: "Plan: move up\nACTION=ACTION1 REPEAT=3"
+    runner = ARCRunner(agent, max_iterations_per_level=1, fast_step_eval=True, speculative_plan_max_steps=0)
+    grid = np.zeros((5, 5), dtype=np.int32)
+    env = DummyEnvWithInfo(grid, baseline_actions=[10])
+
+    obs = runner.play_game(
+        game_id="macro_repeat_test",
+        env=env,
+        max_levels=1,
+        max_steps_per_level=5,
+    )
+    # In 1 LLM decision, it executed 3 steps. Then the next decision takes the remaining 2 steps.
+    assert runner.total_actions_taken == 5
+
+
+def test_runner_macro_repeat_stops_on_noop(tmp_path):
+    """Test that runner halts macro repeat immediately if an action causes NO-OP (wall collision)."""
+    agent = _build_test_agent(tmp_path)
+    agent.brain.decide_action = lambda *args, **kwargs: "Plan: move into wall\nACTION=ACTION1 REPEAT=5"
+    runner = ARCRunner(agent, max_iterations_per_level=1, fast_step_eval=True, speculative_plan_max_steps=0)
+
+    class StaticEnv(DummyEnvWithInfo):
+        def step(self, action, **kwargs):
+            # NO-OP: board does not change at all
+            return DummyObservation(self.grid)
+
+    grid = np.zeros((5, 5), dtype=np.int32)
+    env = StaticEnv(grid, baseline_actions=[10])
+
+    obs = runner.play_game(
+        game_id="macro_noop_test",
+        env=env,
+        max_levels=1,
+        max_steps_per_level=10,
+    )
+    # The first decision requested repeat=5, but because step 1 was NO-OP (grid unchanged),
+    # it immediately stopped repeat and returned to closed-loop!
+    # Stuck threshold is 3, so it halts after 3 NO-OP decisions = 3 total actions taken (not 15!)
+    assert runner.total_actions_taken == agent.stuck_threshold
+

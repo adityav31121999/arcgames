@@ -84,6 +84,26 @@ def extract_coordinates(text: str, grid_shape: Optional[Tuple[int, int]] = None)
     return None
 
 
+def extract_repeat_count(text: str) -> int:
+    """Extracts repeat count from text, e.g. REPEAT=5, REPEAT: 3, x 4, TIMES=2.
+
+    Returns an integer clamped to [1, 10]. Defaults to 1.
+    """
+    m = re.search(r"\b(?:REPEAT|TIMES)\s*[:=]\s*(\d+)", text, re.IGNORECASE)
+    if m:
+        try:
+            return max(1, min(10, int(m.group(1))))
+        except (ValueError, TypeError):
+            pass
+    m_x = re.search(r"\b[xX*]\s*(\d+)\b", text)
+    if m_x:
+        try:
+            return max(1, min(10, int(m_x.group(1))))
+        except (ValueError, TypeError):
+            pass
+    return 1
+
+
 @dataclass(frozen=True)
 class ActionSignature:
     name: str
@@ -207,6 +227,11 @@ class ARCActionMapper:
         if sig in prohibited:
             return None, {}
 
+        if selected_action is not None and not is_complex_action(selected_action):
+            repeat = extract_repeat_count(response_text)
+            if repeat > 1:
+                action_data["repeat"] = repeat
+
         return selected_action, action_data
 
     @staticmethod
@@ -215,11 +240,13 @@ class ARCActionMapper:
         available_actions: List[Any],
         grid_shape: Optional[Tuple[int, int]] = None,
     ) -> List[Tuple[Any, Dict[str, Any]]]:
-        """Parses multi-line macro plan into sequential action tuples."""
+        """Parses multi-line macro plan into sequential action tuples, expanding repeats."""
         plan = []
         for line in plan_text.splitlines():
             if "ACTION" in line.upper():
                 action, action_data = ARCActionMapper.parse(line, available_actions, grid_shape)
                 if action is not None:
-                    plan.append((action, action_data))
+                    repeat = action_data.pop("repeat", 1) if not is_complex_action(action) else 1
+                    for _ in range(repeat):
+                        plan.append((action, dict(action_data)))
         return plan

@@ -54,3 +54,9 @@ submission.parquet
 .pytest_cache/
 .coverage
 htmlcov/
+
+# folders
+dist
+docs
+notebooks
+scratch

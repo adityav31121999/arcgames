@@ -4,7 +4,7 @@ import os
 from typing import Any, List, Optional, Tuple
 import time
 
-from ..core.actions import ARCActionMapper
+from ..core.actions import ARCActionMapper, is_complex_action
 from ..core.diff import clear_hud_pixels, extract_grid_array, get_grid_difference_text
 from ..core.state import ARCState, compute_transition
 from ..memory.knowledge import maybe_append_rule
@@ -310,6 +310,8 @@ class ARCRunner:
             action_name = getattr(action, "name", str(action)).upper()
             render_live(current_state, status=f"🚀 Step {step_count}/{max_steps} (Try {iteration}/{max_iterations}){budget_str} — Executing: {action_name}")
 
+            repeat_count = max(1, min(10, int(action_data.pop("repeat", 1)))) if not is_complex_action(action) else 1
+
             next_state, next_transition, is_repeat_state, is_repeat_transition = self.agent.execute_action(
                 game_id,
                 level,
@@ -321,22 +323,70 @@ class ARCRunner:
                 tag=f"step_{step_count}",
             )
 
+            # Macro repeat execution for non-complex directional moves
+            if (repeat_count > 1 and next_transition.changed is True
+                    and next_state.levels_completed <= initial_completed
+                    and not self.agent.resolver.is_terminal(next_state.game_state)
+                    and not self.should_stop_game()
+                    and not is_repeat_state and not is_repeat_transition):
+                self.agent.log_action(
+                    game_id,
+                    level,
+                    step_count,
+                    next_transition.action_sig,
+                    current_state.state_hash,
+                    next_state.state_hash,
+                    changed=next_transition.changed,
+                )
+                for _ in range(2, repeat_count + 1):
+                    if step_count >= max_steps or self.should_stop_game():
+                        break
+                    sub_prev = next_state
+                    step_count += 1
+                    self._total_actions_taken += 1
+                    next_state, next_transition, is_repeat_state, is_repeat_transition = self.agent.execute_action(
+                        game_id,
+                        level,
+                        env,
+                        sub_prev,
+                        action,
+                        action_data,
+                        step_count,
+                        tag=f"step_{step_count}",
+                    )
+                    self.agent.log_action(
+                        game_id,
+                        level,
+                        step_count,
+                        next_transition.action_sig,
+                        sub_prev.state_hash,
+                        next_state.state_hash,
+                        changed=next_transition.changed,
+                    )
+                    current_state = sub_prev
+                    if (next_transition.changed is False
+                            or next_state.levels_completed > initial_completed
+                            or self.agent.resolver.is_terminal(next_state.game_state)
+                            or is_repeat_state or is_repeat_transition):
+                        break
+
             diff = get_grid_difference_text(current_state.grid, next_state.grid, action_name=action_name)
             visual_analysis = ""
             observation_note = ""
 
             # Terminal/progress checks precede expensive model evaluation.
             if next_state.levels_completed > initial_completed or self.agent.resolver.is_terminal(next_state.game_state):
-                self.agent.log_action(game_id, level, step_count, next_transition.action_sig,
-                                      current_state.state_hash, next_state.state_hash,
-                                      changed=next_transition.changed)
+                if repeat_count <= 1:
+                    self.agent.log_action(game_id, level, step_count, next_transition.action_sig,
+                                          current_state.state_hash, next_state.state_hash,
+                                          changed=next_transition.changed)
                 return next_state, next_state.game_state, step_count
 
             fast_mode = self.fast_step_eval
             zero_diff_streak = zero_diff_streak + 1 if next_transition.changed is False else 0
             full_evaluation = (
                 not fast_mode or next_transition.changed is None or evaluation_failed
-                or (next_transition.changed is True and (is_repeat_state or is_repeat_transition))
+                or (not fast_mode and next_transition.changed is True and (is_repeat_state or is_repeat_transition))
                 or zero_diff_streak >= self.agent.stuck_threshold
                 or step_count % self.full_eval_interval == 0
             )
@@ -396,15 +446,16 @@ class ARCRunner:
             reasoning_summary = f"[{action_name}] {diff}\n[EYE] {visual_analysis}\n[OBSERVATION] {observation_note}"
             render_live(next_state, status=status_line, reasoning=reasoning_summary)
 
-            self.agent.log_action(
-                game_id,
-                level,
-                step_count,
-                next_transition.action_sig,
-                current_state.state_hash,
-                next_state.state_hash,
-                changed=next_transition.changed,
-            )
+            if repeat_count <= 1:
+                self.agent.log_action(
+                    game_id,
+                    level,
+                    step_count,
+                    next_transition.action_sig,
+                    current_state.state_hash,
+                    next_state.state_hash,
+                    changed=next_transition.changed,
+                )
 
             if next_state.levels_completed > initial_completed or self.agent.resolver.is_terminal(next_state.game_state):
                 return next_state, next_state.game_state, step_count

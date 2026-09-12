@@ -105,18 +105,11 @@ State Metadata:
 
 Legal actions: {action_names}
 
-Reconcile the latest observation with the previous prediction before choosing a move.
-Do not repeat a rejected hypothesis as fact. Compare at least two plausible explanations
-and pick one experiment with different predicted outcomes. Unknown goals remain hypotheses.
-Return a compact final decision record with these labeled lines; do not include internal deliberation.
-World model: <current entities and their relationships>
-Goal model: <testable goal hypothesis, or unknown>
-Action model: <observed button effects, distinguishing evidence from guesses>
-Hypotheses: <H1 and H2; supporting/contradicting step evidence>
-Open questions: <what the next experiment distinguishes>
+Choose the next action. You may repeat directional moves (ACTION1-4) across open space using REPEAT=N (N between 1 and 10).
+Return a concise final decision record with these labeled lines:
 Plan: <one sentence goal and rationale>
 Expected effect: <specific observable change to test, or unknown>
-ACTION=<NAME> [X=<int> Y=<int>] [END_ACTION]
+ACTION=<NAME> [X=<int> Y=<int>] [REPEAT=<1-10>] [END_ACTION]
 Only ACTION6 gets X/Y; never append coordinates to movement buttons.
 Next action:"""
 

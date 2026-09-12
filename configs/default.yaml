@@ -2,7 +2,7 @@
 model:
   backend: vllm
   vllm_gpu_memory_utilization: 0.85
-  vllm_enforce_eager: true
+  vllm_enforce_eager: false
   model_id: "nvidia/Gemma-4-26B-A4B-NVFP4"
   fallback_model_ids:
     - "google/gemma-4-26b-a4b"
@@ -17,8 +17,8 @@ model:
   top_p: 0.95
   repeat_penalty: 1.0
   max_new_tokens_eye: 384
-  max_new_tokens_brain: 1536
-  brain_enable_thinking: true
+  max_new_tokens_brain: 128
+  brain_enable_thinking: false
   brain_review_max_tokens: 2048
 
 agent:
@@ -26,7 +26,7 @@ agent:
   consecutive_action_threshold: 5
   max_iterations_per_level: 3
   max_levels_per_game: 10
-  speculative_plan_max_steps: 0
+  speculative_plan_max_steps: 15
   full_eval_interval: 8
   time_budget_hours: 8.5
   memory_root: "./agent_memory"

@@ -237,3 +237,41 @@ Plan: Switch direction to ACTION4 (Right)
 Expected effect: change in grid"""
     act, data = ARCActionMapper.parse(response3, available)
     assert act == Action.ACTION4
+
+
+def test_parse_action_with_repeat():
+    available = [Action.ACTION1, Action.ACTION2, Action.ACTION3, Action.ACTION4]
+    resp = "Plan: Move right across corridor\nACTION=ACTION4 REPEAT=5"
+    act, data = ARCActionMapper.parse(resp, available)
+    assert act == Action.ACTION4
+    assert data.get("repeat") == 5
+
+
+def test_parse_action_with_x_multiplier():
+    available = [Action.ACTION1, Action.ACTION2, Action.ACTION3, Action.ACTION4]
+    resp = "Plan: Move down\nACTION=ACTION2 x 3 [END_ACTION]"
+    act, data = ARCActionMapper.parse(resp, available)
+    assert act == Action.ACTION2
+    assert data.get("repeat") == 3
+
+
+def test_parse_plan_expands_repeats():
+    available = [Action.ACTION1, Action.ACTION2, Action.ACTION3, Action.ACTION4]
+    plan_text = "ACTION=ACTION1 REPEAT=3\nACTION=ACTION4 REPEAT=2\nACTION=ACTION2"
+    plan = ARCActionMapper.parse_plan(plan_text, available)
+    assert len(plan) == 6
+    assert [a for a, d in plan] == [
+        Action.ACTION1, Action.ACTION1, Action.ACTION1,
+        Action.ACTION4, Action.ACTION4,
+        Action.ACTION2,
+    ]
+
+
+def test_complex_action_ignores_repeat():
+    # ACTION6 (click) must not repeat blindly at same coordinates
+    available = [Action.ACTION1, Action.ACTION6]
+    resp = "ACTION=ACTION6 X=10 Y=20 REPEAT=5"
+    act, data = ARCActionMapper.parse(resp, available)
+    assert act == Action.ACTION6
+    assert data == {"x": 10, "y": 20}
+    assert "repeat" not in data
