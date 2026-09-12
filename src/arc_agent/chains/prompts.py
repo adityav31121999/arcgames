@@ -10,7 +10,7 @@ ACTION_DESCRIPTIONS = {
     "ACTION3": "Leftward movement / direction.",
     "ACTION4": "Rightward movement / direction.",
     "ACTION5": "Interact / select / rotate / execute action.",
-    "ACTION6": "Click at coordinate X,Y (0-63 range).",
+    "ACTION6": "Click at coordinate X,Y (0-63 range). Tirggers change.",
     "ACTION7": "Undo action.",
 }
 
@@ -44,6 +44,7 @@ SYSTEM_PROMPT_CLICK_ONLY = (
     "The ONLY valid action in this game is ACTION6 (Click at coordinate X,Y).\n\n"
     "Core Guidelines:\n"
     "- Identify distinct foreground shapes, symbols, icons, or clusters.\n"
+    "- It can trigger certain changes on certain objects. Directly by clicking on object, or indirectly by clicking on certain object.\n"
     "- Border and corner markers may be HUD or interactive; use observed effects to determine their role.\n"
     "- Prefer clicking unclicked objects at their solid center to discover mechanics.\n"
     "- Maintain working memory using labeled prefixes: 'World model:', 'Goal model:', 'Action model:', 'Recent findings:', 'Plan:'."
@@ -89,6 +90,11 @@ SYSTEM_PROMPT = build_system_prompt()
 PROMPT_ASSUME = (
     "Analyze the initial visual layout and metadata to form an initial hypothesis in English.\n"
     "Identify key visual elements. Label proposed object roles and goals as hypotheses, not verified facts.\n"
+    "Detect which elements of the level can trigger changes, and where are they located.\n"
+    "What kind of change each of the clickable elements can trigger?\n"
+    "Which objects trigger change when player/obect appears over it?\n"
+    "Check if there is any piece that needs to matched or not, whether reach a goal post, and other possible objectives "
+    "like moving from one point to another, placing object over something, etc.\n"
     "Format your response strictly using these labeled sections (1-2 concise sentences each):\n"
     "World model: <layout, grid dimensions, background vs foreground shapes>\n"
     "Goal model: <perceived puzzle objective and win condition>\n"
