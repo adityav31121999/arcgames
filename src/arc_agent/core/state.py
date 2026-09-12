@@ -218,6 +218,12 @@ def compute_transition(
         except Exception:
             changed = previous_state.state_hash != current_state.state_hash
         is_noop = not changed
+        if is_noop and previous_state.levels_completed == current_state.levels_completed and previous_state.game_state == current_state.game_state:
+            current_state.state_hash = previous_state.state_hash
+        elif changed and current_state.grid is not None:
+            current_state.state_hash = compute_state_hash(
+                current_state.grid, current_state.game_state, current_state.levels_completed
+            )
 
     return ARCTransition(
         previous=previous_state,

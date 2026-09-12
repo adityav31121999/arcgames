@@ -25,6 +25,8 @@ SYSTEM_PROMPT_TEMPLATE = (
     "- Maintain competing hypotheses, cite observations that support or contradict them, and choose a test that distinguishes them.\n"
     "- Identify the interactive puzzle elements and rule mechanics through structured actions.\n"
     "- Border glyphs may be HUD trackers or interactive elements; treat their role as unknown until tested.\n"
+    "- Small 1-2 pixel updates along outer boundaries (Y=0 or Y=H-1) that advance with each move are the game's step counter / HUD timer. "
+    "If only these border pixels change, the action was an ineffective NO-OP / wall collision.\n"
     "- A NO-OP means no detected visible change; it does not prove a wall or invalid action. "
     "Test alternatives and prerequisites.\n"
     "- Check if there is any piece that needs to matched or not, whether reach a goal post, and other possible objectives "

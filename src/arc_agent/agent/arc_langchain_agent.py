@@ -415,6 +415,7 @@ class ARCLangChainAgent:
         action_sig: Optional[ActionSignature],
         hash_before: str,
         hash_after: str,
+        changed: Optional[bool] = None,
     ) -> None:
         """Appends step entry to markdown actions log."""
         ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
@@ -432,7 +433,10 @@ class ARCLangChainAgent:
                 action_name = str(name)
         else:
             action_name = "UNKNOWN"
-        result = "Changed" if hash_before != hash_after else "NO-OP (Unchanged)"
+        if changed is not None:
+            result = "Changed" if changed else "NO-OP (Unchanged)"
+        else:
+            result = "Changed" if hash_before != hash_after else "NO-OP (Unchanged)"
         line = f"| {step_index} | {ts} | {action_name} | {result} |\n"
         self.cache.append_action_log(game_id, level, line)
 

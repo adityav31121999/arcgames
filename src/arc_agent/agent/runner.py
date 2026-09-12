@@ -178,7 +178,8 @@ class ARCRunner:
             )
 
             self.agent.log_action(
-                game_id, level, steps_used, transition.action_sig, prior_state.state_hash, curr_state.state_hash
+                game_id, level, steps_used, transition.action_sig, prior_state.state_hash, curr_state.state_hash,
+                changed=transition.changed,
             )
 
             if (curr_state.levels_completed > initial_completed
@@ -327,7 +328,8 @@ class ARCRunner:
             # Terminal/progress checks precede expensive model evaluation.
             if next_state.levels_completed > initial_completed or self.agent.resolver.is_terminal(next_state.game_state):
                 self.agent.log_action(game_id, level, step_count, next_transition.action_sig,
-                                      current_state.state_hash, next_state.state_hash)
+                                      current_state.state_hash, next_state.state_hash,
+                                      changed=next_transition.changed)
                 return next_state, next_state.game_state, step_count
 
             fast_mode = self.fast_step_eval
@@ -401,6 +403,7 @@ class ARCRunner:
                 next_transition.action_sig,
                 current_state.state_hash,
                 next_state.state_hash,
+                changed=next_transition.changed,
             )
 
             if next_state.levels_completed > initial_completed or self.agent.resolver.is_terminal(next_state.game_state):

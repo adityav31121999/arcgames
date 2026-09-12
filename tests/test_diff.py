@@ -8,6 +8,7 @@ from arc_agent.core.diff import (
     extract_diff_bounding_box,
     get_gameplay_grid,
     get_grid_difference_text,
+    get_hud_pixels,
 )
 
 
@@ -77,3 +78,48 @@ def test_unchanged_board_does_not_infer_collision():
     description = get_grid_difference_text(grid, grid.copy()).lower()
     assert "cause unknown" in description
     assert "blocked" not in description
+
+
+def test_hud_step_counter_two_pixels_is_noop():
+    # 64x64 grid matching m0r0-492f87ba environment
+    before = np.zeros((64, 64), dtype=int)
+    after = before.copy()
+    # 2 pixels on opposite boundaries: (4, 0) and (59, 63) where 4 + 59 = 63
+    after[0, 4] = 1
+    after[63, 59] = 1
+
+    assert detect_real_change(before, after) is False
+    assert extract_diff_bounding_box(before, after) is None
+    description = get_grid_difference_text(before, after)
+    assert "NO-OP" in description
+    assert (4, 0) in get_hud_pixels()
+    assert (59, 63) in get_hud_pixels()
+
+
+def test_hud_step_counter_masked_during_gameplay_move():
+    before = np.zeros((64, 64), dtype=int)
+    before[49:59, 14:49] = 8  # 10x35 block
+    after = np.zeros((64, 64), dtype=int)
+    after[48:58, 14:49] = 8  # shifted up 1 row
+    # Step counter ticks at the same time
+    after[0, 4] = 1
+    after[63, 59] = 1
+
+    assert detect_real_change(before, after) is True
+    bbox = extract_diff_bounding_box(before, after)
+    assert bbox == (14, 48, 48, 58)  # True gameplay bbox, rows 0 and 63 excluded!
+    description = get_grid_difference_text(before, after)
+    assert "X=[14, 48], Y=[48, 58]" in description
+    assert "Y=[0, 63]" not in description
+
+
+def test_vertical_hud_step_counter_is_noop():
+    before = np.zeros((64, 64), dtype=int)
+    after = before.copy()
+    after[10, 0] = 1
+    after[53, 63] = 1  # 10 + 53 = 63
+
+    assert detect_real_change(before, after) is False
+    assert extract_diff_bounding_box(before, after) is None
+    description = get_grid_difference_text(before, after)
+    assert "NO-OP" in description
