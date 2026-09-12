@@ -31,6 +31,11 @@ SYSTEM_PROMPT_TEMPLATE = (
     "like moving from one point to another, placing object over something, etc.\n"
     "- Maintain working memory using labeled prefixes: 'World model:', 'Goal model:', 'Action model:', 'Recent findings:', 'Plan:'.\n"
     "- Avoid repeating an unchanged experiment; retry a NO-OP when state or prerequisites change.\n"
+    "- The AI agent has to play through multiple levels of a game to win the game.\n"
+    "- The agent should not overthink or over-plan. It should just play through the game and try to win.\n"
+    "- A game can have single action or multiple actions. The agent should be able to handle both cases.\n"
+    "- Total actions for the complete games are provided, but not all actions need to be used in certain levels.\n"
+    "- Some actions are fixed throughout the game, but certain actions are allowed to be used in further levels."
 )
 
 SYSTEM_PROMPT_CLICK_ONLY = (
