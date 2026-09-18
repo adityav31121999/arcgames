@@ -134,6 +134,11 @@ def load_vllm(config, model_id):
     # notebook environments due to IPC / shared-memory limitations. This env var is
     # checked at client construction time, so it works even after vLLM is already imported.
     os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
+    # Disable FlashInfer fused MoE JIT to prevent SM12.x NVCC compilation failures.
+    # Kaggle's CUDA toolkit is < 12.9, which is required to compile flashinfer's
+    # cutlass_fused_moe_sm120 kernel for Blackwell GPUs. vLLM's own VLLM_CUTLASS and
+    # Triton MoE kernels are pre-compiled and work without nvcc at runtime.
+    os.environ["FLASHINFER_ENABLE_FUSED_MOE"] = "0"
     engine = LLM(
         model=model_id, tokenizer=model_id, trust_remote_code=config.trust_remote_code,
         dtype="auto", tensor_parallel_size=1, max_model_len=config.max_context_length,
