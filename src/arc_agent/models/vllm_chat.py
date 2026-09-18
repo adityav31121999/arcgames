@@ -2,6 +2,7 @@
 
 import base64
 import io
+import os
 import re
 from typing import Any
 
@@ -128,6 +129,11 @@ def load_vllm(config, model_id):
             ) from exc
         thinking_budget = 1024
     limit_mm = getattr(config, "limit_mm_per_prompt", None) or {"image": 2, "video": 0}
+    # Disable V1 multiprocessing so vLLM uses InprocClient instead of SyncMPClient.
+    # SyncMPClient spawns a background EngineCore worker process that crashes in Kaggle
+    # notebook environments due to IPC / shared-memory limitations. This env var is
+    # checked at client construction time, so it works even after vLLM is already imported.
+    os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
     engine = LLM(
         model=model_id, tokenizer=model_id, trust_remote_code=config.trust_remote_code,
         dtype="auto", tensor_parallel_size=1, max_model_len=config.max_context_length,
